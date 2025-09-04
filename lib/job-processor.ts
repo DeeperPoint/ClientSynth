@@ -48,12 +48,7 @@ export interface JobRecoveryState {
 }
 
 export class JobProcessor {
-  private supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  })
+  private supabase: any
   private aiGenerator: AIGenerator
   private imageGenerator = new ImageGenerator()
   private s3Uploader = new S3Uploader()
@@ -70,8 +65,27 @@ export class JobProcessor {
   private isCancelled = false
 
   constructor() {
-    this.aiGenerator = new AIGenerator()
-    this.setupJobControlListener()
+    try {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+      if (!supabaseUrl || !serviceRoleKey) {
+        throw new Error("Missing required Supabase environment variables")
+      }
+
+      this.supabase = createClient(supabaseUrl, serviceRoleKey, {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false,
+        },
+      })
+
+      this.aiGenerator = new AIGenerator()
+      this.setupJobControlListener()
+    } catch (error) {
+      console.error("Failed to initialize JobProcessor:", error)
+      throw new Error(`JobProcessor initialization failed: ${error instanceof Error ? error.message : "Unknown error"}`)
+    }
   }
 
   private setupJobControlListener(): void {

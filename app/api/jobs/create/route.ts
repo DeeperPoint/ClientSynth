@@ -57,13 +57,28 @@ export async function POST(request: NextRequest) {
         console.error("Background job processing failed:", error)
       })
     } catch (processError) {
-      console.error("Error starting job processing:", processError)
-      // Don't fail the job creation if processing trigger fails
+      console.error("Error initializing or starting job processing:", processError)
+      // Update job status to failed if processor initialization fails
+      await supabase
+        .from("jobs")
+        .update({
+          status: "failed",
+          error_message: `Job processor initialization failed: ${processError instanceof Error ? processError.message : "Unknown error"}`,
+        })
+        .eq("id", job.id)
+
+      // Don't fail the job creation response, but log the error
+      console.error("Job created but processing failed to start:", processError)
     }
 
     return NextResponse.json({ success: true, job })
   } catch (error) {
     console.error("Error creating job:", error)
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unknown error" }, { status: 500 })
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : "Unknown error occurred",
+      },
+      { status: 500 },
+    )
   }
 }
