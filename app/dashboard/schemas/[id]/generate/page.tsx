@@ -181,10 +181,10 @@ export default function GenerateDataPage() {
   const imageFields = fields.filter((field: any) => field.type === "image")
 
   const estimatedCost = () => {
-    const textModel = availableModels.find((m) => m.id === textModel)
+    const selectedTextModel = availableModels.find((m) => m.id === textModel)
     const baseTokens = 50 // Average tokens per field
     const totalTokens = Number.parseInt(totalRecords) * aiFields.length * baseTokens
-    const textCost = textModel ? (totalTokens / 1000) * textModel.pricing.completion : 0
+    const textCost = selectedTextModel ? (totalTokens / 1000) * selectedTextModel.pricing.completion : 0
     const imageCost = enableImages ? Number.parseInt(totalRecords) * Number.parseInt(imagesPerRecord) * 0.04 : 0
     return (textCost + imageCost).toFixed(2)
   }

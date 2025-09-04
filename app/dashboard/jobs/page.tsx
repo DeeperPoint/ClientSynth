@@ -44,8 +44,6 @@ interface Job {
   generated_records: number
   created_at: string
   updated_at: string
-  started_at?: string
-  completed_at?: string
   error_message?: string
   config: any
   schemas: {
@@ -115,8 +113,6 @@ export default function JobsPage() {
           generated_records,
           created_at,
           updated_at,
-          started_at,
-          completed_at,
           error_message,
           config,
           schemas(id, name),
@@ -243,8 +239,6 @@ export default function JobsPage() {
           error_message: null,
           progress: 0,
           generated_records: 0,
-          started_at: null,
-          completed_at: null,
         })
         .in("id", selectedJobs)
 
@@ -297,8 +291,6 @@ export default function JobsPage() {
           error_message: null,
           progress: 0,
           generated_records: 0,
-          started_at: null,
-          completed_at: null,
         })
         .eq("id", jobId)
 
@@ -618,11 +610,9 @@ export default function JobsPage() {
                         <div className="font-medium">{job.profiles?.full_name || "Unknown"}</div>
                       </div>
                       <div>
-                        <div className="text-sm text-gray-500">
-                          {job.completed_at ? "Completed" : job.started_at ? "Started" : "Created"}
-                        </div>
+                        <div className="text-sm text-gray-500">Created</div>
                         <div className="font-medium">
-                          {formatDistanceToNow(new Date(job.completed_at || job.started_at || job.created_at), {
+                          {formatDistanceToNow(new Date(job.created_at), {
                             addSuffix: true,
                           })}
                         </div>
