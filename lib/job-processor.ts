@@ -65,14 +65,21 @@ export class JobProcessor {
   private isCancelled = false
 
   constructor() {
+    console.log("[v0] JobProcessor constructor called")
     try {
       const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
       const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+      console.log("[v0] Environment variables check:", {
+        hasSupabaseUrl: !!supabaseUrl,
+        hasServiceRoleKey: !!serviceRoleKey,
+      })
 
       if (!supabaseUrl || !serviceRoleKey) {
         throw new Error("Missing required Supabase environment variables")
       }
 
+      console.log("[v0] Creating Supabase client with service role...")
       this.supabase = createClient(supabaseUrl, serviceRoleKey, {
         auth: {
           autoRefreshToken: false,
@@ -80,10 +87,15 @@ export class JobProcessor {
         },
       })
 
+      console.log("[v0] Initializing AI generator...")
       this.aiGenerator = new AIGenerator()
+
+      console.log("[v0] Setting up job control listener...")
       this.setupJobControlListener()
+
+      console.log("[v0] JobProcessor initialized successfully")
     } catch (error) {
-      console.error("Failed to initialize JobProcessor:", error)
+      console.error("[v0] Failed to initialize JobProcessor:", error)
       throw new Error(`JobProcessor initialization failed: ${error instanceof Error ? error.message : "Unknown error"}`)
     }
   }
@@ -253,7 +265,9 @@ export class JobProcessor {
   }
 
   async processNextJob(): Promise<boolean> {
+    console.log("[v0] processNextJob called")
     try {
+      console.log("[v0] Querying for pending jobs...")
       const { data: jobs, error } = await this.supabase
         .from("jobs")
         .select(`
@@ -266,20 +280,25 @@ export class JobProcessor {
           recovery_state,
           schemas!inner(schema_definition)
         `)
-        .in("status", ["pending", "paused"]) // Also process paused jobs
+        .in("status", ["pending", "paused"])
         .order("created_at", { ascending: true })
         .limit(1)
 
       if (error) {
-        console.error("Error getting next job:", error)
+        console.error("[v0] Error getting next job:", error)
         return false
       }
 
+      console.log("[v0] Jobs query result:", { jobCount: jobs?.length || 0 })
+
       if (!jobs || jobs.length === 0) {
+        console.log("[v0] No pending jobs found")
         return false
       }
 
       const jobRow = jobs[0]
+      console.log("[v0] Processing job:", jobRow.id, jobRow.name)
+
       const job: JobData = {
         job_id: jobRow.id,
         tenant_id: jobRow.tenant_id,
@@ -290,21 +309,31 @@ export class JobProcessor {
         schema_definition: jobRow.schemas.schema_definition,
       }
 
+      console.log("[v0] Job data prepared:", {
+        jobId: job.job_id,
+        totalRecords: job.total_records,
+        fieldsCount: job.schema_definition?.fields?.length || 0,
+        config: job.config,
+      })
+
       this.currentJob = job
       this.isPaused = false
       this.isCancelled = false
 
       if (jobRow.recovery_state) {
+        console.log("[v0] Loading recovery state:", jobRow.recovery_state)
         this.recoveryStates.set(job.job_id, jobRow.recovery_state)
       }
 
-      console.log(`[SERVER][JobProcessor] Processing job ${job.job_id}: ${job.name}`)
+      console.log(`[v0][SERVER][JobProcessor] Processing job ${job.job_id}: ${job.name}`)
 
       const textModel = job.config.text_model || "google/gemini-2.5-flash"
       const imageModel = job.config.image_model || "black-forest-labs/flux-1.1-pro"
 
+      console.log("[v0] Setting AI models:", { textModel, imageModel })
       this.aiGenerator.setModel(textModel)
 
+      console.log("[v0] Updating job status to processing...")
       await this.supabase
         .from("jobs")
         .update({
@@ -319,9 +348,11 @@ export class JobProcessor {
         config: job.config,
       })
 
+      console.log("[v0] Starting data generation...")
       await this.generateData(job)
 
       if (!this.isCancelled && !this.isPaused) {
+        console.log("[v0] Job completed successfully, updating status...")
         await this.supabase
           .from("jobs")
           .update({
@@ -332,16 +363,18 @@ export class JobProcessor {
           .eq("id", job.job_id)
 
         await this.logJobMessage(job.job_id, "info", `Completed job: ${job.name}`)
+        console.log("[v0] Job processing completed successfully")
       }
 
       this.currentJob = null
       return true
     } catch (error) {
-      console.error("[SERVER][JobProcessor] Error processing job:", error)
+      console.error("[v0][SERVER][JobProcessor] Error processing job:", error)
 
       if (this.currentJob) {
         const recoveryState = this.getRecoveryState(this.currentJob.job_id)
 
+        console.log("[v0] Updating job status to failed...")
         await this.supabase
           .from("jobs")
           .update({
@@ -372,19 +405,31 @@ export class JobProcessor {
     const { schema_definition, total_records, job_id, tenant_id, config } = job
     const fields = schema_definition?.fields || []
 
-    console.log(`[SERVER][JobProcessor] Generating ${total_records} records for ${fields.length} fields`)
+    console.log(`[v0][SERVER][JobProcessor] Generating ${total_records} records for ${fields.length} fields`)
+    console.log(
+      "[v0] Schema fields:",
+      fields.map((f) => ({ name: f.name, type: f.type })),
+    )
 
     const batchSize = Math.min(config.batch_size || 5, 10)
     const recoveryState = this.getRecoveryState(job_id)
-    let generatedCount = recoveryState.lastSuccessfulRecord + 1 // Resume from last successful record
+    let generatedCount = recoveryState.lastSuccessfulRecord + 1
+
+    console.log("[v0] Generation parameters:", {
+      batchSize,
+      startingFrom: generatedCount,
+      totalRecords: total_records,
+    })
 
     for (let i = generatedCount; i < total_records; i += batchSize) {
       if (this.isCancelled) {
+        console.log("[v0] Job generation cancelled")
         await this.logJobMessage(job_id, "info", "Job generation cancelled")
         return
       }
 
       if (this.isPaused) {
+        console.log("[v0] Job generation paused")
         await this.logJobMessage(job_id, "info", "Job generation paused")
         return
       }
@@ -392,13 +437,17 @@ export class JobProcessor {
       const batchEnd = Math.min(i + batchSize, total_records)
       const batch: GeneratedRecord[] = []
 
+      console.log(`[v0] Processing batch ${i}-${batchEnd - 1}`)
+
       for (let recordIndex = i; recordIndex < batchEnd; recordIndex++) {
         try {
+          console.log(`[v0] Generating record ${recordIndex + 1}/${total_records}`)
           const record = await this.generateSingleRecordWithRetry(fields, recordIndex, job)
+          console.log(`[v0] Generated record ${recordIndex}:`, record)
           batch.push(record)
 
           generatedCount++
-          recoveryState.lastSuccessfulRecord = recordIndex // Track successful records
+          recoveryState.lastSuccessfulRecord = recordIndex
           const progress = Math.floor((generatedCount / total_records) * 100)
 
           await this.supabase
@@ -406,13 +455,13 @@ export class JobProcessor {
             .update({
               generated_records: generatedCount,
               progress: progress,
-              recovery_state: recoveryState, // Save recovery state
+              recovery_state: recoveryState,
             })
             .eq("id", job_id)
 
-          console.log(`[SERVER][JobProcessor] Generated record ${generatedCount}/${total_records} (${progress}%)`)
+          console.log(`[v0][SERVER][JobProcessor] Generated record ${generatedCount}/${total_records} (${progress}%)`)
         } catch (error) {
-          console.error(`[SERVER][JobProcessor] Error generating record ${recordIndex}:`, error)
+          console.error(`[v0][SERVER][JobProcessor] Error generating record ${recordIndex}:`, error)
 
           recoveryState.failedRecords.push(recordIndex)
 
@@ -424,6 +473,7 @@ export class JobProcessor {
       }
 
       if (batch.length > 0) {
+        console.log(`[v0] Saving batch of ${batch.length} records to database...`)
         const recordsToInsert = batch.map((record, batchIndex) => ({
           job_id,
           tenant_id,
@@ -435,14 +485,18 @@ export class JobProcessor {
         const { error: insertError } = await this.supabase.from("generated_data").insert(recordsToInsert)
 
         if (insertError) {
-          console.error(`[SERVER][JobProcessor] Failed to save batch:`, insertError)
+          console.error(`[v0][SERVER][JobProcessor] Failed to save batch:`, insertError)
           throw new Error(`Failed to save generated data: ${insertError.message}`)
         }
+        console.log(`[v0] Successfully saved batch to database`)
       }
 
       const delay = fields.some((f) => this.shouldUseAI(f.type)) ? 200 : 50
+      console.log(`[v0] Waiting ${delay}ms before next batch...`)
       await new Promise((resolve) => setTimeout(resolve, delay))
     }
+
+    console.log("[v0] Data generation completed")
   }
 
   private async generateSingleRecordWithRetry(
@@ -490,12 +544,18 @@ export class JobProcessor {
   }
 
   private async generateSingleRecord(fields: any[], recordIndex: number, job: JobData): Promise<GeneratedRecord> {
+    console.log(`[v0] Generating single record ${recordIndex}`)
     const record: GeneratedRecord = {}
 
     const textFields = fields.filter((field) => field.type !== "image")
     const imageFields = fields.filter((field) => field.type === "image")
 
+    console.log(`[v0] Processing ${textFields.length} text fields and ${imageFields.length} image fields`)
+
+    // Generate text fields first
     for (const field of textFields) {
+      console.log(`[v0] Generating field: ${field.name} (type: ${field.type})`)
+
       const context: GenerationContext = {
         fieldType: field.type,
         fieldName: field.name,
@@ -506,24 +566,35 @@ export class JobProcessor {
       }
 
       if (this.shouldUseAI(field.type)) {
+        console.log(`[v0] Using AI generation for field: ${field.name}`)
         record[field.name] = await this.aiGenerator.generateFieldValue(context)
+        console.log(`[v0] AI generated for ${field.name}:`, record[field.name])
       } else {
+        console.log(`[v0] Using fallback generation for field: ${field.name}`)
         record[field.name] = await this.generateFieldValue(field, recordIndex)
+        console.log(`[v0] Fallback generated for ${field.name}:`, record[field.name])
       }
     }
 
-    if (job.config.enable_images !== false) {
+    // Generate image fields last (with context from text fields)
+    if (job.config.enable_images !== false && imageFields.length > 0) {
+      console.log(`[v0] Generating ${imageFields.length} image fields with context:`, record)
+
       for (const field of imageFields) {
         try {
+          console.log(`[v0] Generating AI image for field: ${field.name}`)
           const imageUrl = await this.generateAIImage(field, record, recordIndex, job)
           record[field.name] = imageUrl
+          console.log(`[v0] Generated image URL for ${field.name}:`, imageUrl)
         } catch (error) {
-          console.error(`[SERVER][JobProcessor] Failed to generate image for ${field.name}:`, error)
+          console.error(`[v0][SERVER][JobProcessor] Failed to generate image for ${field.name}:`, error)
           record[field.name] = this.generatePlaceholderImage(recordIndex)
+          console.log(`[v0] Using placeholder image for ${field.name}:`, record[field.name])
         }
       }
     }
 
+    console.log(`[v0] Completed record ${recordIndex}:`, record)
     return record
   }
 
@@ -539,7 +610,9 @@ export class JobProcessor {
 
       const contextPrompt = this.buildImagePrompt(field, recordData)
 
-      console.log(`[SERVER][JobProcessor] Generating ${imagesPerRecord} image(s) for ${field.name} using ${imageModel}`)
+      console.log(
+        `[v0][SERVER][JobProcessor] Generating ${imagesPerRecord} image(s) for ${field.name} using ${imageModel}`,
+      )
 
       const imageResult = await this.imageGenerator.generateAndUploadImage({
         tenantId: job.tenant_id,
@@ -581,7 +654,7 @@ export class JobProcessor {
 
       return imageResult.url
     } catch (error) {
-      console.error(`[SERVER][JobProcessor] Failed to generate AI image for field ${field.name}:`, error)
+      console.error(`[v0][SERVER][JobProcessor] Failed to generate AI image for field ${field.name}:`, error)
       await this.logJobMessage(job.job_id, "error", `Failed to generate AI image for field: ${field.name}`, {
         error: error instanceof Error ? error.message : "Unknown error",
       })
@@ -803,6 +876,7 @@ export class JobProcessor {
 
   private async logJobMessage(jobId: string, level: string, message: string, metadata: any = {}): Promise<void> {
     try {
+      console.log(`[v0] Logging job message [${level}]: ${message}`, metadata)
       await this.supabase.from("job_logs").insert({
         job_id: jobId,
         level,
@@ -815,7 +889,7 @@ export class JobProcessor {
         created_at: new Date().toISOString(),
       })
     } catch (error) {
-      console.error("[SERVER][JobProcessor] Error logging job message:", error)
+      console.error("[v0][SERVER][JobProcessor] Error logging job message:", error)
     }
   }
 }

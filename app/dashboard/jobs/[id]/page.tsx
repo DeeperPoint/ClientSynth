@@ -349,15 +349,15 @@ export default function JobDetailPage() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case "completed":
-        return "bg-green-100 text-green-800 border-green-200"
+        return "bg-chart-3/10 text-chart-3 border-chart-3/20"
       case "processing":
-        return "bg-blue-100 text-blue-800 border-blue-200"
+        return "bg-primary/10 text-primary border-primary/20"
       case "failed":
-        return "bg-red-100 text-red-800 border-red-200"
+        return "bg-destructive/10 text-destructive border-destructive/20"
       case "pending":
-        return "bg-yellow-100 text-yellow-800 border-yellow-200"
+        return "bg-chart-4/10 text-chart-4 border-chart-4/20"
       default:
-        return "bg-gray-100 text-gray-800 border-gray-200"
+        return "bg-muted text-muted-foreground border-border"
     }
   }
 
@@ -379,13 +379,13 @@ export default function JobDetailPage() {
   const getLogLevelColor = (level: string) => {
     switch (level) {
       case "error":
-        return "text-red-600 bg-red-50 border-red-200"
+        return "text-destructive bg-destructive/5 border-destructive/20"
       case "warning":
-        return "text-yellow-600 bg-yellow-50 border-yellow-200"
+        return "text-chart-4 bg-chart-4/5 border-chart-4/20"
       case "info":
-        return "text-blue-600 bg-blue-50 border-blue-200"
+        return "text-primary bg-primary/5 border-primary/20"
       default:
-        return "text-gray-600 bg-gray-50 border-gray-200"
+        return "text-muted-foreground bg-muted/50 border-border"
     }
   }
 
@@ -417,11 +417,15 @@ export default function JobDetailPage() {
   if (!job) {
     return (
       <div className="max-w-7xl mx-auto text-center py-12">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Job Not Found</h1>
-        <p className="text-gray-600 mb-6">The job you're looking for doesn't exist or you don't have access to it.</p>
-        <Button asChild>
-          <Link href="/dashboard/jobs">Back to Jobs</Link>
-        </Button>
+        <div className="glass-effect rounded-2xl p-12 max-w-md mx-auto">
+          <h1 className="text-2xl font-bold text-foreground mb-2">Job Not Found</h1>
+          <p className="text-muted-foreground mb-6">
+            The job you're looking for doesn't exist or you don't have access to it.
+          </p>
+          <Button asChild className="gradient-primary text-white shadow-medium">
+            <Link href="/dashboard/jobs">Back to Jobs</Link>
+          </Button>
+        </div>
       </div>
     )
   }
@@ -429,7 +433,7 @@ export default function JobDetailPage() {
   const fields = job.schemas?.schema_definition?.fields || []
 
   return (
-    <div className="max-w-7xl mx-auto">
+    <div className="max-w-7xl mx-auto p-6">
       <div className="mb-8">
         <div className="flex items-center gap-4 mb-4">
           <Button variant="ghost" size="sm" asChild>
@@ -449,10 +453,10 @@ export default function JobDetailPage() {
         </div>
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-teal-600 bg-clip-text text-transparent mb-2">
+            <h1 className="text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent mb-2">
               {job.name}
             </h1>
-            <p className="text-gray-600">Schema: {job.schemas?.name}</p>
+            <p className="text-lg text-muted-foreground">Schema: {job.schemas?.name}</p>
           </div>
           <div className="flex items-center gap-3">
             <Badge className={`${getStatusColor(job.status)} text-sm px-3 py-1 border flex items-center gap-2`}>
@@ -466,7 +470,7 @@ export default function JobDetailPage() {
               </Button>
             )}
             {job.status === "completed" && (
-              <Button asChild size="sm">
+              <Button asChild size="sm" className="gradient-primary text-white shadow-medium">
                 <Link href={`/dashboard/jobs/${job.id}/export`}>
                   <Download className="mr-2 h-4 w-4" />
                   Export
@@ -477,12 +481,12 @@ export default function JobDetailPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
-          <Card className="border-2 border-purple-100">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 space-y-8">
+          <Card className="glass-effect shadow-soft hover:shadow-medium transition-all duration-300">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Zap className="h-5 w-5 text-purple-500" />
+              <CardTitle className="flex items-center gap-2 text-foreground">
+                <Zap className="h-5 w-5 text-primary" />
                 Real-time Progress
               </CardTitle>
               <CardDescription>Live generation statistics and progress tracking</CardDescription>
@@ -491,29 +495,29 @@ export default function JobDetailPage() {
               <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-purple-600">{job.generated_records.toLocaleString()}</div>
-                    <div className="text-sm text-gray-500">Generated</div>
+                    <div className="text-2xl font-bold text-primary">{job.generated_records.toLocaleString()}</div>
+                    <div className="text-sm text-muted-foreground">Generated</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-gray-900">{job.total_records.toLocaleString()}</div>
-                    <div className="text-sm text-gray-500">Total</div>
+                    <div className="text-2xl font-bold text-foreground">{job.total_records.toLocaleString()}</div>
+                    <div className="text-sm text-muted-foreground">Total</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-teal-600">{progressStats.recordsPerMinute}</div>
-                    <div className="text-sm text-gray-500">Records/min</div>
+                    <div className="text-2xl font-bold text-accent">{progressStats.recordsPerMinute}</div>
+                    <div className="text-sm text-muted-foreground">Records/min</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-blue-600">
+                    <div className="text-2xl font-bold text-chart-2">
                       {job.status === "processing" ? formatDuration(progressStats.estimatedTimeRemaining) : "—"}
                     </div>
-                    <div className="text-sm text-gray-500">ETA</div>
+                    <div className="text-sm text-muted-foreground">ETA</div>
                   </div>
                 </div>
 
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium">Progress</span>
-                    <span className="text-sm text-gray-600">
+                    <span className="text-sm font-medium text-foreground">Progress</span>
+                    <span className="text-sm text-muted-foreground">
                       {job.generated_records} / {job.total_records} ({job.progress}%)
                     </span>
                   </div>
@@ -521,35 +525,35 @@ export default function JobDetailPage() {
                 </div>
 
                 {job.status === "processing" && (
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <div className="bg-primary/5 border border-primary/20 rounded-xl p-4">
                     <div className="flex items-center gap-2 mb-2">
-                      <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                      <span className="text-sm font-medium text-blue-900">Current Phase</span>
+                      <div className="w-2 h-2 bg-primary rounded-full animate-pulse"></div>
+                      <span className="text-sm font-medium text-primary">Current Phase</span>
                     </div>
-                    <p className="text-sm text-blue-800">{progressStats.currentPhase}</p>
+                    <p className="text-sm text-foreground">{progressStats.currentPhase}</p>
                   </div>
                 )}
 
                 {job.error_message && (
-                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                    <h4 className="font-medium text-red-900 mb-2 flex items-center gap-2">
+                  <div className="bg-destructive/5 border border-destructive/20 rounded-xl p-4">
+                    <h4 className="font-medium text-destructive mb-2 flex items-center gap-2">
                       <AlertCircle className="h-4 w-4" />
                       Error Details
                     </h4>
-                    <p className="text-sm text-red-800">{job.error_message}</p>
+                    <p className="text-sm text-destructive">{job.error_message}</p>
                   </div>
                 )}
               </div>
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="glass-effect shadow-soft">
             <CardContent className="pt-6">
               <Tabs defaultValue="logs" className="w-full">
                 <TabsList className="grid w-full grid-cols-2">
                   <TabsTrigger value="logs" className="flex items-center gap-2">
                     <div
-                      className={`w-2 h-2 rounded-full ${logs.length > 0 && isLiveMode ? "bg-green-500 animate-pulse" : "bg-gray-400"}`}
+                      className={`w-2 h-2 rounded-full ${logs.length > 0 && isLiveMode ? "bg-chart-3 animate-pulse" : "bg-muted-foreground"}`}
                     ></div>
                     Live Logs ({logs.length})
                   </TabsTrigger>
@@ -559,13 +563,13 @@ export default function JobDetailPage() {
                 <TabsContent value="logs" className="mt-6">
                   <div className="space-y-3 max-h-96 overflow-y-auto">
                     {logs.length === 0 ? (
-                      <div className="text-center py-8 text-gray-500">No logs available</div>
+                      <div className="text-center py-8 text-muted-foreground">No logs available</div>
                     ) : (
                       <>
                         {logs.map((log) => (
                           <div
                             key={log.id}
-                            className={`border-l-4 pl-4 py-3 rounded-r-lg ${getLogLevelColor(log.level)}`}
+                            className={`border-l-4 pl-4 py-3 rounded-r-xl ${getLogLevelColor(log.level)}`}
                           >
                             <div className="flex items-center justify-between mb-1">
                               <span className="text-sm font-medium">{log.level.toUpperCase()}</span>
@@ -593,24 +597,26 @@ export default function JobDetailPage() {
                 <TabsContent value="sample" className="mt-6">
                   <div className="space-y-4 max-h-96 overflow-y-auto">
                     {sampleData.length === 0 ? (
-                      <div className="text-center py-8 text-gray-500">No sample data available</div>
+                      <div className="text-center py-8 text-muted-foreground">No sample data available</div>
                     ) : (
                       sampleData.map((record) => (
                         <div
                           key={record.id}
-                          className="bg-gradient-to-r from-purple-50 to-teal-50 border border-purple-100 rounded-lg p-4"
+                          className="bg-gradient-to-r from-primary/5 to-accent/5 border border-primary/20 rounded-xl p-4"
                         >
                           <div className="flex items-center justify-between mb-3">
-                            <span className="text-sm font-medium text-gray-900">Record #{record.record_index + 1}</span>
-                            <span className="text-xs text-gray-500">
+                            <span className="text-sm font-medium text-foreground">
+                              Record #{record.record_index + 1}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
                               {formatDistanceToNow(new Date(record.created_at), { addSuffix: true })}
                             </span>
                           </div>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                             {Object.entries(record.record_data).map(([key, value]) => (
                               <div key={key}>
-                                <div className="text-xs text-gray-500 mb-1 font-medium">{key}</div>
-                                <div className="text-sm text-gray-900 truncate bg-white px-2 py-1 rounded border">
+                                <div className="text-xs text-muted-foreground mb-1 font-medium">{key}</div>
+                                <div className="text-sm text-foreground truncate bg-card px-2 py-1 rounded border">
                                   {String(value)}
                                 </div>
                               </div>
@@ -626,50 +632,53 @@ export default function JobDetailPage() {
           </Card>
         </div>
 
-        {/* Job Details Sidebar */}
         <div className="space-y-6">
-          <Card>
+          <Card className="glass-effect shadow-soft">
             <CardHeader>
-              <CardTitle>Job Details</CardTitle>
+              <CardTitle className="text-foreground">Job Details</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <div className="text-sm text-gray-500 mb-1">Created By</div>
-                <div className="font-medium">{job.profiles?.full_name || "Unknown"}</div>
+                <div className="text-sm text-muted-foreground mb-1">Created By</div>
+                <div className="font-medium text-foreground">{job.profiles?.full_name || "Unknown"}</div>
               </div>
               <div>
-                <div className="text-sm text-gray-500 mb-1">Created</div>
-                <div className="font-medium">{formatDistanceToNow(new Date(job.created_at), { addSuffix: true })}</div>
+                <div className="text-sm text-muted-foreground mb-1">Created</div>
+                <div className="font-medium text-foreground">
+                  {formatDistanceToNow(new Date(job.created_at), { addSuffix: true })}
+                </div>
               </div>
               {job.started_at && (
                 <div>
-                  <div className="text-sm text-gray-500 mb-1">Started</div>
-                  <div className="font-medium">
+                  <div className="text-sm text-muted-foreground mb-1">Started</div>
+                  <div className="font-medium text-foreground">
                     {formatDistanceToNow(new Date(job.started_at), { addSuffix: true })}
                   </div>
                 </div>
               )}
               {job.completed_at && (
                 <div>
-                  <div className="text-sm text-gray-500 mb-1">Completed</div>
-                  <div className="font-medium">
+                  <div className="text-sm text-muted-foreground mb-1">Completed</div>
+                  <div className="font-medium text-foreground">
                     {formatDistanceToNow(new Date(job.completed_at), { addSuffix: true })}
                   </div>
                 </div>
               )}
               <div>
-                <div className="text-sm text-gray-500 mb-1">Last Updated</div>
-                <div className="font-medium">{formatDistanceToNow(new Date(job.updated_at), { addSuffix: true })}</div>
+                <div className="text-sm text-muted-foreground mb-1">Last Updated</div>
+                <div className="font-medium text-foreground">
+                  {formatDistanceToNow(new Date(job.updated_at), { addSuffix: true })}
+                </div>
               </div>
               <div>
-                <div className="text-sm text-gray-500 mb-1">Schema</div>
+                <div className="text-sm text-muted-foreground mb-1">Schema</div>
                 <div className="font-medium">
                   {job.schemas?.id === "unknown" ? (
-                    <span className="text-red-600">{job.schemas.name}</span>
+                    <span className="text-destructive">{job.schemas.name}</span>
                   ) : (
                     <Link
                       href={`/dashboard/schemas/${job.schemas?.id}`}
-                      className="text-purple-600 hover:text-purple-700"
+                      className="text-primary hover:text-primary/80 transition-colors"
                     >
                       {job.schemas?.name}
                     </Link>
@@ -678,8 +687,8 @@ export default function JobDetailPage() {
               </div>
               {job.config?.text_model && (
                 <div>
-                  <div className="text-sm text-gray-500 mb-1">AI Model</div>
-                  <div className="font-medium text-sm bg-purple-50 px-2 py-1 rounded border">
+                  <div className="text-sm text-muted-foreground mb-1">AI Model</div>
+                  <div className="font-medium text-sm bg-primary/10 text-primary px-3 py-1 rounded-lg border border-primary/20">
                     {job.config.text_model}
                   </div>
                 </div>
@@ -687,9 +696,9 @@ export default function JobDetailPage() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="glass-effect shadow-soft">
             <CardHeader>
-              <CardTitle>Schema Fields</CardTitle>
+              <CardTitle className="text-foreground">Schema Fields</CardTitle>
               <CardDescription>{fields.length} fields in this schema</CardDescription>
             </CardHeader>
             <CardContent>
@@ -697,11 +706,11 @@ export default function JobDetailPage() {
                 {fields.map((field: any, index: number) => (
                   <div
                     key={index}
-                    className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0"
+                    className="flex items-center justify-between py-2 border-b border-border last:border-0"
                   >
                     <div>
-                      <div className="font-medium text-sm">{field.name}</div>
-                      <div className="text-xs text-gray-500">{field.type}</div>
+                      <div className="font-medium text-sm text-foreground">{field.name}</div>
+                      <div className="text-xs text-muted-foreground">{field.type}</div>
                     </div>
                     <div className="flex items-center gap-2">
                       {field.required && (
@@ -710,7 +719,7 @@ export default function JobDetailPage() {
                         </Badge>
                       )}
                       {["name", "email", "company", "text", "image"].includes(field.type) && (
-                        <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">
+                        <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/20">
                           AI
                         </Badge>
                       )}

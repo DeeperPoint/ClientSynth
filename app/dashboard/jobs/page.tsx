@@ -255,15 +255,15 @@ export default function JobsPage() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case "completed":
-        return "bg-green-100 text-green-800 border-green-200"
+        return "bg-chart-3/10 text-chart-3 border-chart-3/20"
       case "processing":
-        return "bg-blue-100 text-blue-800 border-blue-200"
+        return "bg-primary/10 text-primary border-primary/20"
       case "failed":
-        return "bg-red-100 text-red-800 border-red-200"
+        return "bg-destructive/10 text-destructive border-destructive/20"
       case "pending":
-        return "bg-yellow-100 text-yellow-800 border-yellow-200"
+        return "bg-chart-4/10 text-chart-4 border-chart-4/20"
       default:
-        return "bg-gray-100 text-gray-800 border-gray-200"
+        return "bg-muted text-muted-foreground border-border"
     }
   }
 
@@ -332,17 +332,17 @@ export default function JobsPage() {
 
   if (isLoading) {
     return (
-      <div className="max-w-7xl mx-auto">
+      <div className="max-w-7xl mx-auto p-6">
         <div className="animate-pulse">
-          <div className="h-8 bg-gray-200 rounded w-1/4 mb-6"></div>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-            {[1, 2, 3, 4].map((i) => (
+          <div className="h-8 bg-gray-200 rounded w-1/4 mb-10"></div>
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-6 mb-8">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
               <div key={i} className="h-24 bg-gray-200 rounded-lg"></div>
             ))}
           </div>
-          <div className="space-y-4">
+          <div className="space-y-6">
             {[1, 2, 3].map((i) => (
-              <div key={i} className="h-32 bg-gray-200 rounded-lg"></div>
+              <div key={i} className="h-24 bg-gray-200 rounded-lg"></div>
             ))}
           </div>
         </div>
@@ -353,20 +353,20 @@ export default function JobsPage() {
   const stats = getJobStats()
 
   return (
-    <div className="max-w-7xl mx-auto">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-teal-600 bg-clip-text text-transparent mb-2">
+    <div className="max-w-7xl mx-auto p-6">
+      <div className="flex items-center justify-between mb-10">
+        <div className="space-y-2">
+          <h1 className="text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
             Job Console
           </h1>
-          <p className="text-gray-600">Monitor and manage your data generation jobs</p>
+          <p className="text-lg text-muted-foreground">Monitor and manage your data generation jobs</p>
         </div>
         <div className="flex items-center gap-3">
           <Button variant="outline" onClick={refreshJobs} disabled={isRefreshing}>
             <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
             Refresh
           </Button>
-          <Button asChild>
+          <Button asChild className="gradient-primary text-white shadow-medium">
             <Link href="/dashboard/schemas">
               <Play className="mr-2 h-4 w-4" />
               New Job
@@ -375,67 +375,65 @@ export default function JobsPage() {
         </div>
       </div>
 
-      {/* Enhanced Job Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-6">
-        <Card className="border-purple-100">
+      <div className="grid grid-cols-1 md:grid-cols-6 gap-6 mb-8">
+        <Card className="glass-effect hover:shadow-medium transition-all duration-300">
           <CardContent className="pt-6">
             <div className="text-center">
-              <div className="text-2xl font-bold text-gray-900">{stats.total}</div>
-              <div className="text-sm text-gray-500">Total Jobs</div>
+              <div className="text-2xl font-bold text-foreground">{stats.total}</div>
+              <div className="text-sm text-muted-foreground">Total Jobs</div>
             </div>
           </CardContent>
         </Card>
-        <Card className="border-yellow-100">
+        <Card className="glass-effect hover:shadow-medium transition-all duration-300 border-chart-4/20">
           <CardContent className="pt-6">
             <div className="text-center">
-              <div className="text-2xl font-bold text-yellow-600">{stats.pending}</div>
-              <div className="text-sm text-gray-500">Pending</div>
+              <div className="text-2xl font-bold text-chart-4">{stats.pending}</div>
+              <div className="text-sm text-muted-foreground">Pending</div>
             </div>
           </CardContent>
         </Card>
-        <Card className="border-blue-100">
+        <Card className="glass-effect hover:shadow-medium transition-all duration-300 border-primary/20">
           <CardContent className="pt-6">
             <div className="text-center">
-              <div className="text-2xl font-bold text-blue-600">{stats.processing}</div>
-              <div className="text-sm text-gray-500">Processing</div>
+              <div className="text-2xl font-bold text-primary">{stats.processing}</div>
+              <div className="text-sm text-muted-foreground">Processing</div>
             </div>
           </CardContent>
         </Card>
-        <Card className="border-green-100">
+        <Card className="glass-effect hover:shadow-medium transition-all duration-300 border-chart-3/20">
           <CardContent className="pt-6">
             <div className="text-center">
-              <div className="text-2xl font-bold text-green-600">{stats.completed}</div>
-              <div className="text-sm text-gray-500">Completed</div>
+              <div className="text-2xl font-bold text-chart-3">{stats.completed}</div>
+              <div className="text-sm text-muted-foreground">Completed</div>
             </div>
           </CardContent>
         </Card>
-        <Card className="border-red-100">
+        <Card className="glass-effect hover:shadow-medium transition-all duration-300 border-destructive/20">
           <CardContent className="pt-6">
             <div className="text-center">
-              <div className="text-2xl font-bold text-red-600">{stats.failed}</div>
-              <div className="text-sm text-gray-500">Failed</div>
+              <div className="text-2xl font-bold text-destructive">{stats.failed}</div>
+              <div className="text-sm text-muted-foreground">Failed</div>
             </div>
           </CardContent>
         </Card>
-        <Card className="border-teal-100">
+        <Card className="glass-effect hover:shadow-medium transition-all duration-300 border-accent/20">
           <CardContent className="pt-6">
             <div className="text-center">
-              <div className="text-2xl font-bold text-teal-600">
+              <div className="text-2xl font-bold text-accent">
                 {((stats.generatedRecords / Math.max(stats.totalRecords, 1)) * 100).toFixed(0)}%
               </div>
-              <div className="text-sm text-gray-500">Overall Progress</div>
+              <div className="text-sm text-muted-foreground">Overall Progress</div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Enhanced Filters and Controls */}
-      <Card className="mb-6 border-2 border-purple-100">
+      <Card className="mb-8 glass-effect shadow-soft">
         <CardContent className="pt-6">
           <div className="flex flex-col lg:flex-row gap-4">
             <div className="flex-1">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Search jobs, schemas, creators, or job IDs..."
                   value={searchQuery}
@@ -447,7 +445,7 @@ export default function JobsPage() {
 
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-2">
-                <Filter className="h-4 w-4 text-gray-400" />
+                <Filter className="h-4 w-4 text-muted-foreground" />
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
                   <SelectTrigger className="w-32">
                     <SelectValue />
@@ -463,7 +461,7 @@ export default function JobsPage() {
               </div>
 
               <div className="flex items-center gap-2">
-                <Calendar className="h-4 w-4 text-gray-400" />
+                <Calendar className="h-4 w-4 text-muted-foreground" />
                 <Select value={dateFilter} onValueChange={setDateFilter}>
                   <SelectTrigger className="w-32">
                     <SelectValue />
@@ -501,11 +499,10 @@ export default function JobsPage() {
             </div>
           </div>
 
-          {/* Bulk Actions */}
           {selectedJobs.length > 0 && (
-            <div className="mt-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
+            <div className="mt-6 p-4 bg-primary/5 border border-primary/20 rounded-xl">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-purple-900">{selectedJobs.length} job(s) selected</span>
+                <span className="text-sm font-medium text-primary">{selectedJobs.length} job(s) selected</span>
                 <div className="flex items-center gap-2">
                   <Button size="sm" variant="outline" onClick={bulkRetryJobs}>
                     <RotateCcw className="mr-2 h-4 w-4" />
@@ -525,37 +522,35 @@ export default function JobsPage() {
         </CardContent>
       </Card>
 
-      {/* Jobs List */}
       {filteredJobs.length === 0 ? (
-        <Card>
+        <Card className="glass-effect">
           <CardContent className="pt-12 pb-12 text-center">
-            <Play className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">
+            <Play className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
+            <h3 className="text-lg font-medium text-foreground mb-2">
               {jobs.length === 0 ? "No jobs yet" : "No jobs match your filters"}
             </h3>
-            <p className="text-gray-600 mb-6">
+            <p className="text-muted-foreground mb-6">
               {jobs.length === 0
                 ? "Create your first data generation job from a schema"
                 : "Try adjusting your search or filter criteria"}
             </p>
             {jobs.length === 0 && (
-              <Button asChild>
+              <Button asChild className="gradient-primary text-white shadow-medium">
                 <Link href="/dashboard/schemas">Browse Schemas</Link>
               </Button>
             )}
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-4">
-          {/* Select All Header */}
-          <Card className="border-gray-200">
+        <div className="space-y-6">
+          <Card className="glass-effect">
             <CardContent className="pt-4 pb-4">
               <div className="flex items-center gap-3">
                 <Checkbox
                   checked={selectedJobs.length === filteredJobs.length && filteredJobs.length > 0}
                   onCheckedChange={toggleSelectAll}
                 />
-                <span className="text-sm font-medium text-gray-700">Select All ({filteredJobs.length} jobs)</span>
+                <span className="text-sm font-medium text-foreground">Select All ({filteredJobs.length} jobs)</span>
               </div>
             </CardContent>
           </Card>
@@ -563,8 +558,8 @@ export default function JobsPage() {
           {filteredJobs.map((job) => (
             <Card
               key={job.id}
-              className={`hover:shadow-lg transition-all duration-200 ${
-                selectedJobs.includes(job.id) ? "ring-2 ring-purple-200 bg-purple-50" : ""
+              className={`hover:shadow-medium transition-all duration-300 glass-effect ${
+                selectedJobs.includes(job.id) ? "ring-2 ring-primary/30 bg-primary/5" : ""
               }`}
             >
               <CardContent className="pt-6">
@@ -577,13 +572,13 @@ export default function JobsPage() {
 
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-3">
-                      <h3 className="text-lg font-semibold text-gray-900">{job.name}</h3>
+                      <h3 className="text-lg font-semibold text-foreground">{job.name}</h3>
                       <Badge className={`${getStatusColor(job.status)} flex items-center gap-1 border`}>
                         {getStatusIcon(job.status)}
                         {job.status.charAt(0).toUpperCase() + job.status.slice(1)}
                       </Badge>
                       {job.config?.text_model && (
-                        <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">
+                        <Badge variant="outline" className="text-xs bg-accent/10 text-accent border-accent/20">
                           {job.config.text_model.split("/").pop()}
                         </Badge>
                       )}
@@ -591,27 +586,27 @@ export default function JobsPage() {
 
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                       <div>
-                        <div className="text-sm text-gray-500">Schema</div>
+                        <div className="text-sm text-muted-foreground">Schema</div>
                         <Link
                           href={`/dashboard/schemas/${job.schemas?.id}`}
-                          className="font-medium text-purple-600 hover:text-purple-700"
+                          className="font-medium text-primary hover:text-primary/80 transition-colors"
                         >
                           {job.schemas?.name}
                         </Link>
                       </div>
                       <div>
-                        <div className="text-sm text-gray-500">Progress</div>
-                        <div className="font-medium">
+                        <div className="text-sm text-muted-foreground">Progress</div>
+                        <div className="font-medium text-foreground">
                           {job.generated_records.toLocaleString()} / {job.total_records.toLocaleString()}
                         </div>
                       </div>
                       <div>
-                        <div className="text-sm text-gray-500">Created By</div>
-                        <div className="font-medium">{job.profiles?.full_name || "Unknown"}</div>
+                        <div className="text-sm text-muted-foreground">Created By</div>
+                        <div className="font-medium text-foreground">{job.profiles?.full_name || "Unknown"}</div>
                       </div>
                       <div>
-                        <div className="text-sm text-gray-500">Created</div>
-                        <div className="font-medium">
+                        <div className="text-sm text-muted-foreground">Created</div>
+                        <div className="font-medium text-foreground">
                           {formatDistanceToNow(new Date(job.created_at), {
                             addSuffix: true,
                           })}
@@ -619,21 +614,19 @@ export default function JobsPage() {
                       </div>
                     </div>
 
-                    {/* Progress Bar */}
                     <div className="mb-4">
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm text-gray-600">Completion</span>
-                        <span className="text-sm font-medium">{job.progress}%</span>
+                        <span className="text-sm text-muted-foreground">Completion</span>
+                        <span className="text-sm font-medium text-foreground">{job.progress}%</span>
                       </div>
                       <Progress value={job.progress} className="h-2" />
                     </div>
 
-                    {/* Error Message */}
                     {job.error_message && (
-                      <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                      <div className="bg-destructive/5 border border-destructive/20 rounded-xl p-4 mb-4">
                         <div className="flex items-start gap-2">
-                          <AlertCircle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
-                          <div className="text-sm text-red-800">{job.error_message}</div>
+                          <AlertCircle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
+                          <div className="text-sm text-destructive">{job.error_message}</div>
                         </div>
                       </div>
                     )}
@@ -678,7 +671,10 @@ export default function JobsPage() {
 
                         <DropdownMenuSeparator />
 
-                        <DropdownMenuItem onClick={() => deleteJob(job.id)} className="text-red-600 focus:text-red-600">
+                        <DropdownMenuItem
+                          onClick={() => deleteJob(job.id)}
+                          className="text-destructive focus:text-destructive"
+                        >
                           <Trash2 className="mr-2 h-4 w-4" />
                           Delete Job
                         </DropdownMenuItem>
