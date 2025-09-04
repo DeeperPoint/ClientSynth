@@ -8,9 +8,23 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
-import { ArrowLeft, Download, FileText, Database, Table, Code } from "lucide-react"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  ArrowLeft,
+  Download,
+  FileText,
+  Database,
+  Table,
+  Code,
+  FileCode,
+  BarChart,
+  AlertCircle,
+  CheckCircle,
+  Clock,
+  Zap,
+} from "lucide-react"
 import Link from "next/link"
-import { useParams, useRouter } from "next/navigation"
+import { useParams } from "next/navigation"
 
 interface Job {
   id: string
@@ -38,10 +52,54 @@ interface ExportRecord {
 }
 
 const EXPORT_FORMATS = [
-  { value: "csv", label: "CSV", description: "Comma-separated values", icon: Table },
-  { value: "json", label: "JSON", description: "JavaScript Object Notation", icon: Code },
-  { value: "xlsx", label: "Excel", description: "Microsoft Excel format", icon: FileText },
-  { value: "sql", label: "SQL", description: "SQL INSERT statements", icon: Database },
+  {
+    value: "csv",
+    label: "CSV",
+    description: "Universal format, Excel compatible",
+    icon: Table,
+    maxRecords: 1000000,
+    recommended: true,
+  },
+  {
+    value: "json",
+    label: "JSON",
+    description: "Web-friendly, API ready",
+    icon: Code,
+    maxRecords: 100000,
+    recommended: true,
+  },
+  {
+    value: "xlsx",
+    label: "Excel",
+    description: "Native Excel format with formatting",
+    icon: FileText,
+    maxRecords: 500000,
+    recommended: false,
+  },
+  {
+    value: "sql",
+    label: "SQL",
+    description: "Database INSERT statements",
+    icon: Database,
+    maxRecords: 1000000,
+    recommended: false,
+  },
+  {
+    value: "xml",
+    label: "XML",
+    description: "Structured markup language",
+    icon: FileCode,
+    maxRecords: 100000,
+    recommended: false,
+  },
+  {
+    value: "parquet",
+    label: "Parquet",
+    description: "Analytics optimized columnar format",
+    icon: BarChart,
+    maxRecords: 10000000,
+    recommended: false,
+  },
 ]
 
 export default function ExportPage() {
@@ -57,7 +115,6 @@ export default function ExportPage() {
   const [recordLimit, setRecordLimit] = useState("")
 
   const params = useParams()
-  const router = useRouter()
   const supabase = createClient()
 
   useEffect(() => {
@@ -173,9 +230,61 @@ export default function ExportPage() {
     return Math.round((bytes / Math.pow(1024, i)) * 100) / 100 + " " + sizes[i]
   }
 
+  function estimateFileSize(): string {
+    const recordCount = recordLimit ? Number(recordLimit) : job.generated_records
+    const fieldCount = selectedFields.length
+
+    let bytesPerRecord = 0
+
+    switch (format) {
+      case "csv":
+        bytesPerRecord = fieldCount * 20 // Average 20 bytes per field
+        break
+      case "json":
+        bytesPerRecord = fieldCount * 35 // JSON overhead
+        break
+      case "xlsx":
+        bytesPerRecord = fieldCount * 25 // Excel compression
+        break
+      case "sql":
+        bytesPerRecord = fieldCount * 40 // SQL syntax overhead
+        break
+      case "xml":
+        bytesPerRecord = fieldCount * 50 // XML tag overhead
+        break
+      case "parquet":
+        bytesPerRecord = fieldCount * 15 // Columnar compression
+        break
+    }
+
+    const totalBytes = recordCount * bytesPerRecord
+    return formatFileSize(totalBytes)
+  }
+
+  function estimateProcessingTime(): string {
+    const recordCount = recordLimit ? Number(recordLimit) : job.generated_records
+
+    // Rough estimates based on format complexity
+    const recordsPerSecond =
+      {
+        csv: 10000,
+        json: 8000,
+        xlsx: 3000,
+        sql: 5000,
+        xml: 4000,
+        parquet: 6000,
+      }[format] || 5000
+
+    const seconds = Math.ceil(recordCount / recordsPerSecond)
+
+    if (seconds < 60) return `~${seconds} seconds`
+    if (seconds < 3600) return `~${Math.ceil(seconds / 60)} minutes`
+    return `~${Math.ceil(seconds / 3600)} hours`
+  }
+
   if (isLoading) {
     return (
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-6xl mx-auto">
         <div className="animate-pulse">
           <div className="h-8 bg-gray-200 rounded w-1/3 mb-6"></div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -189,7 +298,7 @@ export default function ExportPage() {
 
   if (!job) {
     return (
-      <div className="max-w-4xl mx-auto text-center py-12">
+      <div className="max-w-6xl mx-auto text-center py-12">
         <h1 className="text-2xl font-bold text-gray-900 mb-2">Job Not Found</h1>
         <p className="text-gray-600">The job you're looking for doesn't exist.</p>
       </div>
@@ -198,7 +307,7 @@ export default function ExportPage() {
 
   if (job.status !== "completed") {
     return (
-      <div className="max-w-4xl mx-auto text-center py-12">
+      <div className="max-w-6xl mx-auto text-center py-12">
         <h1 className="text-2xl font-bold text-gray-900 mb-2">Export Not Available</h1>
         <p className="text-gray-600 mb-6">This job must be completed before you can export the data.</p>
         <Button asChild>
@@ -211,7 +320,7 @@ export default function ExportPage() {
   const fields = job.schemas?.schema_definition?.fields || []
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="max-w-6xl mx-auto">
       <div className="mb-8">
         <div className="flex items-center gap-4 mb-4">
           <Button variant="ghost" size="sm" asChild>
@@ -221,167 +330,306 @@ export default function ExportPage() {
             </Link>
           </Button>
         </div>
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Export Data: {job.name}</h1>
+        <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-teal-600 bg-clip-text text-transparent mb-2">
+          Export Data: {job.name}
+        </h1>
         <p className="text-gray-600">{job.generated_records.toLocaleString()} records available for export</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Export Configuration */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Create New Export</CardTitle>
-            <CardDescription>Configure your data export settings</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="grid gap-2">
-              <Label htmlFor="export-name">Export Name</Label>
-              <Input
-                id="export-name"
-                value={exportName}
-                onChange={(e) => setExportName(e.target.value)}
-                placeholder="Enter export name"
-              />
-            </div>
+      <Tabs defaultValue="create" className="space-y-6">
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="create">Create Export</TabsTrigger>
+          <TabsTrigger value="history">Export History ({exports.length})</TabsTrigger>
+        </TabsList>
 
-            <div className="grid gap-2">
-              <Label>Export Format</Label>
-              <div className="grid grid-cols-2 gap-2">
-                {EXPORT_FORMATS.map((fmt) => {
-                  const Icon = fmt.icon
-                  return (
-                    <div
-                      key={fmt.value}
-                      className={`border rounded-lg p-3 cursor-pointer transition-colors ${
-                        format === fmt.value ? "border-blue-500 bg-blue-50" : "border-gray-200 hover:border-gray-300"
-                      }`}
-                      onClick={() => setFormat(fmt.value)}
+        <TabsContent value="create">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Export Configuration */}
+            <Card className="border-2 border-purple-100">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Download className="h-5 w-5 text-purple-500" />
+                  Export Configuration
+                </CardTitle>
+                <CardDescription>Configure your data export settings</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid gap-2">
+                  <Label htmlFor="export-name">Export Name</Label>
+                  <Input
+                    id="export-name"
+                    value={exportName}
+                    onChange={(e) => setExportName(e.target.value)}
+                    placeholder="Enter export name"
+                  />
+                </div>
+
+                <div className="grid gap-3">
+                  <Label>Export Format</Label>
+                  <div className="grid grid-cols-1 gap-3">
+                    {EXPORT_FORMATS.map((fmt) => {
+                      const Icon = fmt.icon
+                      const isRecommended = fmt.recommended
+                      const exceedsLimit = job.generated_records > fmt.maxRecords
+
+                      return (
+                        <div
+                          key={fmt.value}
+                          className={`border rounded-lg p-4 cursor-pointer transition-all ${
+                            format === fmt.value
+                              ? "border-purple-500 bg-purple-50 ring-2 ring-purple-200"
+                              : exceedsLimit
+                                ? "border-gray-200 bg-gray-50 opacity-50 cursor-not-allowed"
+                                : "border-gray-200 hover:border-purple-300 hover:bg-purple-50"
+                          }`}
+                          onClick={() => !exceedsLimit && setFormat(fmt.value)}
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="flex items-center gap-3">
+                              <Icon className="h-5 w-5 text-gray-600" />
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-medium text-sm">{fmt.label}</span>
+                                  {isRecommended && (
+                                    <Badge variant="secondary" className="text-xs bg-green-100 text-green-700">
+                                      Recommended
+                                    </Badge>
+                                  )}
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1">{fmt.description}</p>
+                                <p className="text-xs text-gray-400 mt-1">
+                                  Max: {fmt.maxRecords.toLocaleString()} records
+                                </p>
+                              </div>
+                            </div>
+                            {exceedsLimit && <AlertCircle className="h-4 w-4 text-red-500" />}
+                          </div>
+
+                          {exceedsLimit && (
+                            <div className="mt-2 text-xs text-red-600 bg-red-50 p-2 rounded">
+                              Dataset too large for this format. Consider using CSV or Parquet.
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div className="grid gap-2">
+                  <Label>
+                    Fields to Export ({selectedFields.length} of {fields.length})
+                  </Label>
+                  <div className="max-h-48 overflow-y-auto border rounded-lg p-3 space-y-2 bg-gray-50">
+                    {fields.map((field: any) => (
+                      <div key={field.name} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={field.name}
+                          checked={selectedFields.includes(field.name)}
+                          onCheckedChange={() => toggleField(field.name)}
+                        />
+                        <Label htmlFor={field.name} className="text-sm font-normal cursor-pointer flex-1">
+                          <div className="flex items-center justify-between">
+                            <span>{field.name}</span>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="text-xs">
+                                {field.type}
+                              </Badge>
+                              {["name", "email", "company", "text", "image"].includes(field.type) && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-xs bg-purple-50 text-purple-700 border-purple-200"
+                                >
+                                  AI
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                        </Label>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSelectedFields(fields.map((f: any) => f.name))}
                     >
-                      <div className="flex items-center gap-2 mb-1">
-                        <Icon className="h-4 w-4" />
-                        <span className="font-medium text-sm">{fmt.label}</span>
-                      </div>
-                      <p className="text-xs text-gray-500">{fmt.description}</p>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-
-            <div className="grid gap-2">
-              <Label>
-                Fields to Export ({selectedFields.length} of {fields.length})
-              </Label>
-              <div className="max-h-48 overflow-y-auto border rounded-lg p-3 space-y-2">
-                {fields.map((field: any) => (
-                  <div key={field.name} className="flex items-center space-x-2">
-                    <Checkbox
-                      id={field.name}
-                      checked={selectedFields.includes(field.name)}
-                      onCheckedChange={() => toggleField(field.name)}
-                    />
-                    <Label htmlFor={field.name} className="text-sm font-normal cursor-pointer">
-                      {field.name}
-                      <span className="text-xs text-gray-500 ml-2">({field.type})</span>
-                    </Label>
+                      Select All
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => setSelectedFields([])}>
+                      Select None
+                    </Button>
                   </div>
-                ))}
-              </div>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => setSelectedFields(fields.map((f: any) => f.name))}>
-                  Select All
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="record-limit">Record Limit (optional)</Label>
+                  <Input
+                    id="record-limit"
+                    type="number"
+                    min="1"
+                    max={job.generated_records}
+                    value={recordLimit}
+                    onChange={(e) => setRecordLimit(e.target.value)}
+                    placeholder={`Max ${job.generated_records.toLocaleString()}`}
+                  />
+                  <p className="text-xs text-gray-500">Leave empty to export all records</p>
+                </div>
+
+                <Button
+                  onClick={createExport}
+                  disabled={isExporting || !exportName.trim() || selectedFields.length === 0}
+                  className="w-full bg-gradient-to-r from-purple-600 to-teal-500 hover:from-purple-700 hover:to-teal-700"
+                >
+                  {isExporting ? (
+                    <>
+                      <Zap className="mr-2 h-4 w-4 animate-pulse" />
+                      Creating Export...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="mr-2 h-4 w-4" />
+                      Create Export
+                    </>
+                  )}
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => setSelectedFields([])}>
-                  Select None
-                </Button>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
 
-            <div className="grid gap-2">
-              <Label htmlFor="record-limit">Record Limit (optional)</Label>
-              <Input
-                id="record-limit"
-                type="number"
-                min="1"
-                max={job.generated_records}
-                value={recordLimit}
-                onChange={(e) => setRecordLimit(e.target.value)}
-                placeholder={`Max ${job.generated_records.toLocaleString()}`}
-              />
-              <p className="text-xs text-gray-500">Leave empty to export all records</p>
-            </div>
-
-            <Button
-              onClick={createExport}
-              disabled={isExporting || !exportName.trim() || selectedFields.length === 0}
-              className="w-full"
-            >
-              <Download className="mr-2 h-4 w-4" />
-              {isExporting ? "Creating Export..." : "Create Export"}
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Export History */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Export History</CardTitle>
-            <CardDescription>Previous exports for this job ({exports.length})</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {exports.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
-                <Download className="mx-auto h-8 w-8 mb-2" />
-                <p>No exports created yet</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {exports.map((exportRecord) => (
-                  <div key={exportRecord.id} className="border rounded-lg p-4">
-                    <div className="flex items-start justify-between mb-2">
-                      <div>
-                        <h4 className="font-medium text-sm">{exportRecord.name}</h4>
-                        <p className="text-xs text-gray-500">
-                          {new Date(exportRecord.created_at).toLocaleDateString()}
-                        </p>
-                      </div>
-                      <Badge
-                        variant={
-                          exportRecord.status === "completed"
-                            ? "default"
-                            : exportRecord.status === "failed"
-                              ? "destructive"
-                              : "secondary"
-                        }
-                      >
-                        {exportRecord.status}
-                      </Badge>
+            {/* Export Preview */}
+            <Card className="border-2 border-teal-100">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-teal-500" />
+                  Export Preview
+                </CardTitle>
+                <CardDescription>Preview of your export configuration</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="bg-gradient-to-r from-purple-50 to-teal-50 p-4 rounded-lg border">
+                  <h4 className="font-medium text-sm mb-3">Export Summary</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Name:</span>
+                      <span className="font-medium">{exportName || "Untitled Export"}</span>
                     </div>
-
-                    <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 mb-3">
-                      <div>Format: {exportRecord.format.toUpperCase()}</div>
-                      <div>Records: {exportRecord.record_count?.toLocaleString() || "Unknown"}</div>
-                      <div>Size: {formatFileSize(exportRecord.file_size)}</div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Format:</span>
+                      <span className="font-medium">{format.toUpperCase()}</span>
                     </div>
-
-                    {exportRecord.error_message && (
-                      <div className="bg-red-50 border border-red-200 rounded p-2 mb-3">
-                        <p className="text-xs text-red-800">{exportRecord.error_message}</p>
-                      </div>
-                    )}
-
-                    {exportRecord.status === "completed" && exportRecord.file_url && (
-                      <Button size="sm" onClick={() => downloadExport(exportRecord)} className="w-full">
-                        <Download className="mr-2 h-3 w-3" />
-                        Download
-                      </Button>
-                    )}
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Fields:</span>
+                      <span className="font-medium">{selectedFields.length} selected</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Records:</span>
+                      <span className="font-medium">
+                        {recordLimit ? Number(recordLimit).toLocaleString() : job.generated_records.toLocaleString()}
+                      </span>
+                    </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+                </div>
+
+                {selectedFields.length > 0 && (
+                  <div>
+                    <h4 className="font-medium text-sm mb-2">Selected Fields</h4>
+                    <div className="flex flex-wrap gap-1">
+                      {selectedFields.slice(0, 10).map((field) => (
+                        <Badge key={field} variant="outline" className="text-xs">
+                          {field}
+                        </Badge>
+                      ))}
+                      {selectedFields.length > 10 && (
+                        <Badge variant="outline" className="text-xs">
+                          +{selectedFields.length - 10} more
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="text-xs text-gray-500 bg-gray-50 p-3 rounded">
+                  <strong>Estimated file size:</strong> {estimateFileSize()} <br />
+                  <strong>Processing time:</strong> {estimateProcessingTime()}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="history">
+          {/* Export History */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Export History</CardTitle>
+              <CardDescription>Previous exports for this job ({exports.length})</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {exports.length === 0 ? (
+                <div className="text-center py-12 text-gray-500">
+                  <Download className="mx-auto h-12 w-12 mb-4 opacity-50" />
+                  <h3 className="text-lg font-medium mb-2">No exports created yet</h3>
+                  <p className="mb-4">Create your first export to get started</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {exports.map((exportRecord) => (
+                    <Card key={exportRecord.id} className="hover:shadow-md transition-shadow">
+                      <CardContent className="pt-4">
+                        <div className="flex items-start justify-between mb-3">
+                          <div>
+                            <h4 className="font-medium text-sm">{exportRecord.name}</h4>
+                            <p className="text-xs text-gray-500">
+                              {new Date(exportRecord.created_at).toLocaleDateString()}
+                            </p>
+                          </div>
+                          <Badge
+                            variant={
+                              exportRecord.status === "completed"
+                                ? "default"
+                                : exportRecord.status === "failed"
+                                  ? "destructive"
+                                  : "secondary"
+                            }
+                            className="flex items-center gap-1"
+                          >
+                            {exportRecord.status === "completed" && <CheckCircle className="h-3 w-3" />}
+                            {exportRecord.status === "failed" && <AlertCircle className="h-3 w-3" />}
+                            {exportRecord.status === "processing" && <Clock className="h-3 w-3" />}
+                            {exportRecord.status}
+                          </Badge>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 mb-3">
+                          <div>
+                            <span className="font-medium">{exportRecord.format.toUpperCase()}</span>
+                          </div>
+                          <div>{exportRecord.record_count?.toLocaleString() || "Unknown"} records</div>
+                          <div className="col-span-2">Size: {formatFileSize(exportRecord.file_size)}</div>
+                        </div>
+
+                        {exportRecord.error_message && (
+                          <div className="bg-red-50 border border-red-200 rounded p-2 mb-3">
+                            <p className="text-xs text-red-800">{exportRecord.error_message}</p>
+                          </div>
+                        )}
+
+                        {exportRecord.status === "completed" && exportRecord.file_url && (
+                          <Button size="sm" onClick={() => downloadExport(exportRecord)} className="w-full">
+                            <Download className="mr-2 h-3 w-3" />
+                            Download
+                          </Button>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

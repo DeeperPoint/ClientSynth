@@ -1,5 +1,5 @@
 import { generateText } from "ai"
-import { openai } from "@ai-sdk/openai"
+import { createOpenRouter } from "@openrouter/ai-sdk-provider"
 
 export interface GenerationContext {
   fieldType: string
@@ -11,7 +11,22 @@ export interface GenerationContext {
 }
 
 export class AIGenerator {
-  private model = openai("gpt-4o-mini") // Using cost-effective model for data generation
+  private openrouter = createOpenRouter({
+    apiKey: process.env.OPENROUTER_API_KEY,
+  })
+
+  private currentModel = "google/gemini-2.5-flash"
+  private model = this.openrouter(this.currentModel)
+
+  setModel(modelId: string): void {
+    this.currentModel = modelId
+    this.model = this.openrouter(modelId)
+    console.log(`[AIGenerator] Switched to model: ${modelId}`)
+  }
+
+  getCurrentModel(): string {
+    return this.currentModel
+  }
 
   async generateFieldValue(context: GenerationContext): Promise<string> {
     const { fieldType, fieldName, fieldDescription, recordIndex, existingData } = context
@@ -19,18 +34,33 @@ export class AIGenerator {
     try {
       const prompt = this.buildPrompt(context)
 
+      console.log(`[v0] Generating AI content for ${fieldName} with model ${this.currentModel}`)
+      console.log(`[v0] Prompt: ${prompt.substring(0, 100)}...`)
+
       const { text } = await generateText({
         model: this.model,
         prompt,
-        maxTokens: 100,
-        temperature: 0.7,
+        maxTokens: 150, // Increased token limit for better responses
+        temperature: 0.3, // Lower temperature for more consistent results
       })
 
-      return text.trim()
+      console.log(`[v0] AI generated for ${fieldName}: ${text}`)
+
+      const cleanedText = text.trim().replace(/^["']|["']$/g, "") // Remove quotes if present
+      return cleanedText
     } catch (error) {
-      console.error(`AI generation failed for ${fieldName}:`, error)
+      console.error(`[v0] AI generation failed for ${fieldName}:`, error)
+      console.error(`[v0] Error details:`, {
+        message: error instanceof Error ? error.message : "Unknown error",
+        fieldName,
+        fieldType,
+        model: this.currentModel,
+      })
+
       // Fallback to deterministic generation
-      return this.getFallbackValue(fieldType, fieldName, recordIndex)
+      const fallbackValue = this.getFallbackValue(fieldType, fieldName, recordIndex)
+      console.log(`[v0] Using fallback value for ${fieldName}: ${fallbackValue}`)
+      return fallbackValue
     }
   }
 
@@ -41,33 +71,30 @@ export class AIGenerator {
     const contextInfo = existingData ? this.buildContextFromExistingData(existingData) : ""
 
     const basePrompts: Record<string, string> = {
-      name: `Generate a realistic full name for a person. ${contextInfo}`,
-      email: `Generate a professional email address. ${contextInfo}`,
-      phone: `Generate a realistic phone number in US format (XXX) XXX-XXXX.`,
-      company: `Generate a realistic company name. ${contextInfo}`,
-      address: `Generate a realistic street address. ${contextInfo}`,
-      city: `Generate a realistic city name. ${contextInfo}`,
-      country: `Generate a country name. ${contextInfo}`,
-      job_title: `Generate a realistic job title. ${contextInfo}`,
-      industry: `Generate a business industry name. ${contextInfo}`,
-      text: `Generate realistic text content for "${fieldName}". ${fieldDescription ? `Context: ${fieldDescription}` : ""} ${contextInfo}`,
-      long_text: `Generate a realistic paragraph of text for "${fieldName}". ${fieldDescription ? `Context: ${fieldDescription}` : ""} ${contextInfo}`,
-      url: `Generate a realistic website URL. ${contextInfo}`,
+      name: `Generate a realistic full name (first and last name).`,
+      first_name: `Generate a realistic first name only.`,
+      last_name: `Generate a realistic last name only.`,
+      email: `Generate a professional email address.`,
+      phone: `Generate a phone number in format (XXX) XXX-XXXX.`,
+      company: `Generate a realistic company name.`,
+      address: `Generate a realistic street address.`,
+      city: `Generate a real city name.`,
+      country: `Generate a real country name.`,
+      job_title: `Generate a realistic job title.`,
+      industry: `Generate a realistic industry name.`,
+      text: fieldDescription
+        ? `Generate realistic content for: ${fieldDescription}`
+        : `Generate realistic ${fieldName.replace(/_/g, " ")} content.`,
+      long_text: fieldDescription
+        ? `Generate a realistic paragraph about: ${fieldDescription}`
+        : `Generate a realistic paragraph about ${fieldName.replace(/_/g, " ")}.`,
+      url: `Generate a realistic website URL.`,
     }
 
     const specificPrompt =
-      basePrompts[fieldType] ||
-      `Generate realistic content for a ${fieldType} field named "${fieldName}". ${fieldDescription ? `Description: ${fieldDescription}` : ""}`
+      basePrompts[fieldType] || basePrompts[fieldName] || `Generate realistic ${fieldName.replace(/_/g, " ")} content.`
 
-    return `${specificPrompt}
-
-Requirements:
-- Return ONLY the generated value, no explanations
-- Make it realistic and professional
-- Ensure variety across different records
-- Keep it concise and appropriate
-
-Generate:`
+    return `${specificPrompt} ${contextInfo} Return only the generated value, no explanations or quotes.`
   }
 
   private buildContextFromExistingData(existingData: Record<string, any>): string {

@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { JobProcessor } from "@/lib/job-processor"
 
 export async function POST(request: NextRequest) {
   try {
@@ -47,6 +48,17 @@ export async function POST(request: NextRequest) {
 
     if (jobError) {
       return NextResponse.json({ error: jobError.message }, { status: 500 })
+    }
+
+    try {
+      const processor = new JobProcessor()
+      // Process job asynchronously without blocking the response
+      processor.processNextJob().catch((error) => {
+        console.error("Background job processing failed:", error)
+      })
+    } catch (processError) {
+      console.error("Error starting job processing:", processError)
+      // Don't fail the job creation if processing trigger fails
     }
 
     return NextResponse.json({ success: true, job })

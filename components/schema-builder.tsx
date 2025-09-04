@@ -186,43 +186,54 @@ export function SchemaBuilder() {
   }
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto p-4 sm:p-6">
-      {/* Schema Info */}
-      <Card>
+    <div className="space-y-8 max-w-6xl mx-auto p-4 sm:p-6">
+      <div className="text-center space-y-4 mb-12">
+        <h1 className="text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+          Create New Schema
+        </h1>
+        <p className="text-xl text-muted-foreground">Design your data structure for synthetic client generation</p>
+      </div>
+
+      <Card className="glass-effect shadow-medium border-0">
         <CardHeader>
-          <CardTitle>Schema Information</CardTitle>
-          <CardDescription>Basic details about your data schema</CardDescription>
+          <CardTitle className="text-2xl font-semibold">Schema Information</CardTitle>
+          <CardDescription className="text-lg">Basic details about your data schema</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-2">
-            <Label htmlFor="schema-name">Schema Name</Label>
+        <CardContent className="space-y-6">
+          <div className="grid gap-3">
+            <Label htmlFor="schema-name" className="text-base font-medium">
+              Schema Name
+            </Label>
             <Input
               id="schema-name"
               placeholder="e.g., Customer Profiles, Lead Database"
               value={schemaName}
               onChange={(e) => setSchemaName(e.target.value)}
+              className="h-12 text-base"
             />
           </div>
-          <div className="grid gap-2">
-            <Label htmlFor="schema-description">Description</Label>
+          <div className="grid gap-3">
+            <Label htmlFor="schema-description" className="text-base font-medium">
+              Description
+            </Label>
             <Textarea
               id="schema-description"
               placeholder="Describe what this schema is used for..."
               value={schemaDescription}
               onChange={(e) => setSchemaDescription(e.target.value)}
+              className="min-h-[100px] text-base"
             />
           </div>
         </CardContent>
       </Card>
 
-      {/* AI Generation Notice */}
-      <Card className="border-blue-200 bg-blue-50">
+      <Card className="border-0 bg-gradient-to-r from-primary/10 to-accent/10 shadow-soft">
         <CardContent className="pt-6">
-          <div className="flex items-start gap-3">
-            <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0"></div>
+          <div className="flex items-start gap-4">
+            <div className="w-3 h-3 bg-gradient-to-r from-primary to-accent rounded-full mt-2 flex-shrink-0"></div>
             <div>
-              <h3 className="font-medium text-blue-900 mb-1">AI-Powered Generation</h3>
-              <p className="text-sm text-blue-800">
+              <h3 className="font-semibold text-primary mb-2 text-lg">AI-Powered Generation</h3>
+              <p className="text-base text-foreground/80">
                 Fields marked with AI will use advanced language models to generate realistic, contextual data. Image
                 fields will generate professional profile photos using OpenRouter models.
               </p>
@@ -231,35 +242,39 @@ export function SchemaBuilder() {
         </CardContent>
       </Card>
 
-      {/* Fields */}
-      <Card>
+      <Card className="glass-effect shadow-medium border-0">
         <CardHeader>
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div>
-              <CardTitle>Schema Fields</CardTitle>
-              <CardDescription>Define the structure of your synthetic data</CardDescription>
+              <CardTitle className="text-2xl font-semibold">Schema Fields</CardTitle>
+              <CardDescription className="text-lg">Define the structure of your synthetic data</CardDescription>
             </div>
-            <Button onClick={addField} size="sm" className="w-full sm:w-auto">
-              <Plus className="mr-2 h-4 w-4" />
+            <Button onClick={addField} size="lg" className="gradient-primary text-white shadow-soft w-full sm:w-auto">
+              <Plus className="mr-2 h-5 w-5" />
               Add Field
             </Button>
           </div>
         </CardHeader>
         <CardContent>
           {fields.length === 0 ? (
-            <div className="text-center py-8 border-2 border-dashed border-gray-200 rounded-lg">
-              <p className="text-gray-500 mb-4">No fields added yet</p>
-              <Button onClick={addField} variant="outline">
-                <Plus className="mr-2 h-4 w-4" />
+            <div className="text-center py-12 border-2 border-dashed border-primary/20 rounded-xl bg-gradient-to-br from-primary/5 to-accent/5">
+              <p className="text-muted-foreground mb-6 text-lg">No fields added yet</p>
+              <Button
+                onClick={addField}
+                variant="outline"
+                size="lg"
+                className="border-primary/20 hover:bg-primary/5 bg-transparent"
+              >
+                <Plus className="mr-2 h-5 w-5" />
                 Add Your First Field
               </Button>
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-6">
               {fields.map((field, index) => {
                 const fieldType = FIELD_TYPES.find((t) => t.value === field.type)
                 return (
-                  <div key={field.id} className="border border-gray-200 rounded-lg p-4">
+                  <div key={field.id} className="border border-border/50 rounded-xl p-6 bg-card/30 shadow-soft">
                     <div className="flex flex-col lg:flex-row items-start gap-4">
                       <div className="hidden lg:flex flex-shrink-0 mt-2">
                         <GripVertical className="h-4 w-4 text-gray-400" />
@@ -344,19 +359,29 @@ export function SchemaBuilder() {
         </CardContent>
       </Card>
 
-      {/* Actions */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-        <Button variant="outline" onClick={() => router.back()} className="w-full sm:w-auto">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-6 pt-4">
+        <Button
+          variant="outline"
+          onClick={() => router.back()}
+          size="lg"
+          className="w-full sm:w-auto border-primary/20 hover:bg-primary/5"
+        >
           Cancel
         </Button>
-        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-          <Button variant="outline" disabled={fields.length === 0} className="w-full sm:w-auto bg-transparent">
+        <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+          <Button
+            variant="outline"
+            disabled={fields.length === 0}
+            size="lg"
+            className="w-full sm:w-auto border-accent/20 hover:bg-accent/5 bg-transparent"
+          >
             Preview
           </Button>
           <Button
             onClick={saveSchema}
             disabled={isSaving || !schemaName.trim() || fields.length === 0}
-            className="w-full sm:w-auto"
+            size="lg"
+            className="w-full sm:w-auto gradient-primary text-white shadow-medium"
           >
             {isSaving ? "Saving..." : "Save Schema"}
           </Button>

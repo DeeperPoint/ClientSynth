@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { SchemaEditor } from "@/components/schema-editor"
 import { useParams, useRouter } from "next/navigation"
+import { Button } from "@/components/ui/button"
 
 interface Schema {
   id: string
@@ -76,32 +77,30 @@ export default function EditSchemaPage() {
 
   if (error || !schema) {
     return (
-      <div className="max-w-7xl mx-auto text-center py-12">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">
-          {error === "Invalid schema ID format" ? "Invalid Schema ID" : "Schema Not Found"}
-        </h1>
-        <p className="text-gray-600 mb-4">
-          {error === "Invalid schema ID format"
-            ? "The schema ID format is invalid. Please check the URL and try again."
-            : "The schema you're looking for doesn't exist or you don't have access to it."}
-        </p>
-        <button
-          onClick={() => router.push("/dashboard/schema")}
-          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
-        >
-          Back to Schemas
-        </button>
+      <div className="max-w-7xl mx-auto text-center py-20">
+        <div className="glass-effect rounded-2xl p-12 max-w-md mx-auto">
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-destructive to-destructive/70 bg-clip-text text-transparent mb-4">
+            {error === "Invalid schema ID format" ? "Invalid Schema ID" : "Schema Not Found"}
+          </h1>
+          <p className="text-lg text-muted-foreground mb-8">
+            {error === "Invalid schema ID format"
+              ? "The schema ID format is invalid. Please check the URL and try again."
+              : "The schema you're looking for doesn't exist or you don't have access to it."}
+          </p>
+          <Button
+            onClick={() => router.push("/dashboard/schemas")}
+            size="lg"
+            className="gradient-primary text-white shadow-medium"
+          >
+            Back to Schemas
+          </Button>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="max-w-7xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Edit Schema: {schema.name}</h1>
-        <p className="text-gray-600">{schema.description}</p>
-      </div>
-
+    <div className="max-w-7xl mx-auto p-6">
       <SchemaEditor schema={schema} />
     </div>
   )
