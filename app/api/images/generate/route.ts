@@ -1,18 +1,28 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { ImageGenerator } from "@/lib/image-generator"
-import { createServerClient } from "@/lib/supabase/server"
-import { cookies } from "next/headers"
+import { ImageGenerationService } from "@/lib/image-generation/image-service"
+import { createClient } from "@/lib/supabase/server"
 
 export async function POST(request: NextRequest) {
   try {
-    const { tenantId, jobId, recordId, prompt, model, recordData } = await request.json()
+    const {
+      tenantId,
+      jobId,
+      recordId,
+      fieldName,
+      prompt,
+      model,
+      recordData,
+      fieldDescription,
+      provider = "fal",
+      style = "professional",
+    } = await request.json()
 
-    if (!tenantId || !jobId || !recordId || !prompt || !model) {
+    if (!tenantId || !jobId || !recordId || !fieldName || !prompt) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
     }
 
     // Verify user has access to this tenant
-    const supabase = createServerClient(cookies())
+    const supabase = await createClient()
     const {
       data: { user },
     } = await supabase.auth.getUser()
@@ -32,19 +42,36 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 })
     }
 
-    const imageGenerator = new ImageGenerator()
-    const imageUrl = await imageGenerator.generateAndUploadImage({
+    console.log(`[ImageAPI] Generating image for field: ${fieldName}`)
+
+    const imageService = new ImageGenerationService()
+    const result = await imageService.generateAndUploadImage({
       tenantId,
       jobId,
       recordId,
+      fieldName,
       prompt,
-      model,
       recordData,
+      fieldDescription,
+      provider,
+      style,
+      model,
     })
 
-    return NextResponse.json({ imageUrl })
+    console.log(`[ImageAPI] Image generated successfully: ${result.url}`)
+
+    return NextResponse.json({
+      success: true,
+      result,
+    })
   } catch (error) {
-    console.error("Image generation error:", error)
-    return NextResponse.json({ error: "Failed to generate image" }, { status: 500 })
+    console.error("[ImageAPI] Image generation error:", error)
+    return NextResponse.json(
+      {
+        error: "Failed to generate image",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 },
+    )
   }
 }

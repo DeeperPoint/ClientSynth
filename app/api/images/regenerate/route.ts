@@ -1,7 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { ImageGenerator } from "@/lib/image-generator"
-import { createServerClient } from "@/lib/supabase/server"
-import { cookies } from "next/headers"
+import { createClient } from "@/lib/supabase/server"
 
 export async function POST(request: NextRequest) {
   try {
@@ -12,7 +11,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify user has access to this tenant
-    const supabase = createServerClient(cookies())
+    const supabase = await createClient()
     const {
       data: { user },
     } = await supabase.auth.getUser()

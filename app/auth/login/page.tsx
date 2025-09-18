@@ -24,14 +24,24 @@ export default function LoginPage() {
     setIsLoading(true)
     setError(null)
 
+    console.log("[v0] Starting login process with email:", email)
+    console.log("[v0] Supabase URL:", process.env.NEXT_PUBLIC_SUPABASE_URL)
+    console.log("[v0] Supabase Anon Key exists:", !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+
     try {
       const { error } = await supabase.auth.signInWithPassword({
         email,
         password,
       })
+
+      console.log("[v0] Login response error:", error)
+
       if (error) throw error
+
+      console.log("[v0] Login successful, redirecting to dashboard")
       router.push("/dashboard")
     } catch (error: unknown) {
+      console.log("[v0] Login error caught:", error)
       setError(error instanceof Error ? error.message : "An error occurred")
     } finally {
       setIsLoading(false)
