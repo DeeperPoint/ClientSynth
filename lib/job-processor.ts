@@ -53,6 +53,7 @@ export class JobProcessor {
   private imageGenerator = new ImageGenerator()
   private s3Uploader = new S3Uploader()
   private currentJob: JobData | null = null
+  private channel: any = null
 
   private jobControls = new Map<string, JobControlSignal>()
   private recoveryStates = new Map<string, JobRecoveryState>()
@@ -102,13 +103,33 @@ export class JobProcessor {
 
   private setupJobControlListener(): void {
     // Listen for job control signals via Supabase real-time
-    this.supabase
+    this.channel = this.supabase
       .channel("job-controls")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "job_controls" }, (payload) => {
         const signal = payload.new as JobControlSignal
         this.handleJobControl(signal)
       })
       .subscribe()
+  }
+
+  // Add cleanup method
+  public async cleanup(): Promise<void> {
+    console.log("[v0] Cleaning up JobProcessor...")
+    
+    // Unsubscribe from real-time channel
+    if (this.channel) {
+      await this.supabase.removeChannel(this.channel)
+      this.channel = null
+    }
+    
+    // Clear current job
+    this.currentJob = null
+    
+    // Clear maps
+    this.jobControls.clear()
+    this.recoveryStates.clear()
+    
+    console.log("[v0] JobProcessor cleanup completed")
   }
 
   private async handleJobControl(signal: JobControlSignal): Promise<void> {
@@ -267,46 +288,32 @@ export class JobProcessor {
   async processNextJob(): Promise<boolean> {
     console.log("[v0] processNextJob called")
     try {
-      console.log("[v0] Querying for pending jobs...")
-      const { data: jobs, error } = await this.supabase
-        .from("jobs")
-        .select(`
-          id,
-          tenant_id,
-          schema_id,
-          name,
-          total_records,
-          config,
-          recovery_state,
-          schemas!inner(schema_definition)
-        `)
-        .in("status", ["pending", "paused"])
-        .order("created_at", { ascending: true })
-        .limit(1)
+      console.log("[v0] Querying for next job using safe function...")
+      const { data: jobData, error } = await this.supabase.rpc('get_next_job_safe')
 
       if (error) {
         console.error("[v0] Error getting next job:", error)
         return false
       }
 
-      console.log("[v0] Jobs query result:", { jobCount: jobs?.length || 0 })
+      console.log("[v0] Job query result:", { hasJob: !!jobData })
 
-      if (!jobs || jobs.length === 0) {
+      if (!jobData || jobData.length === 0) {
         console.log("[v0] No pending jobs found")
         return false
       }
 
-      const jobRow = jobs[0]
-      console.log("[v0] Processing job:", jobRow.id, jobRow.name)
+      const jobRow = jobData[0]
+      console.log("[v0] Processing job:", jobRow.job_id, jobRow.name)
 
       const job: JobData = {
-        job_id: jobRow.id,
+        job_id: jobRow.job_id,
         tenant_id: jobRow.tenant_id,
         schema_id: jobRow.schema_id,
         name: jobRow.name,
         total_records: jobRow.total_records,
         config: jobRow.config || {},
-        schema_definition: jobRow.schemas.schema_definition,
+        schema_definition: jobRow.schema_definition,
       }
 
       console.log("[v0] Job data prepared:", {
@@ -333,14 +340,7 @@ export class JobProcessor {
       console.log("[v0] Setting AI models:", { textModel, imageModel })
       this.aiGenerator.setModel(textModel)
 
-      console.log("[v0] Updating job status to processing...")
-      await this.supabase
-        .from("jobs")
-        .update({
-          status: "processing",
-          started_at: new Date().toISOString(),
-        })
-        .eq("id", job.job_id)
+      console.log("[v0] Job status already updated to processing by get_next_job_safe()")
 
       await this.logJobMessage(job.job_id, "info", `Started processing job: ${job.name}`, {
         textModel,
@@ -353,14 +353,15 @@ export class JobProcessor {
 
       if (!this.isCancelled && !this.isPaused) {
         console.log("[v0] Job completed successfully, updating status...")
-        await this.supabase
-          .from("jobs")
-          .update({
-            status: "completed",
-            completed_at: new Date().toISOString(),
-            progress: 100,
-          })
-          .eq("id", job.job_id)
+        const { error: completeError } = await this.supabase.rpc('update_job_status', {
+          p_job_id: job.job_id,
+          p_new_status: 'completed',
+          p_progress: 100
+        })
+        
+        if (completeError) {
+          throw new Error(`Failed to complete job: ${completeError.message}`)
+        }
 
         await this.logJobMessage(job.job_id, "info", `Completed job: ${job.name}`)
         console.log("[v0] Job processing completed successfully")
@@ -375,15 +376,15 @@ export class JobProcessor {
         const recoveryState = this.getRecoveryState(this.currentJob.job_id)
 
         console.log("[v0] Updating job status to failed...")
-        await this.supabase
-          .from("jobs")
-          .update({
-            status: "failed",
-            error_message: error instanceof Error ? error.message : "Unknown error",
-            completed_at: new Date().toISOString(),
-            recovery_state: recoveryState,
-          })
-          .eq("id", this.currentJob.job_id)
+        const { error: failError } = await this.supabase.rpc('update_job_status', {
+          p_job_id: this.currentJob.job_id,
+          p_new_status: 'failed',
+          p_error_message: error instanceof Error ? error.message : "Unknown error"
+        })
+        
+        if (failError) {
+          console.error("[v0] Failed to update job status to failed:", failError)
+        }
 
         await this.logJobMessage(
           this.currentJob.job_id,
@@ -398,6 +399,9 @@ export class JobProcessor {
 
       this.currentJob = null
       return false
+    } finally {
+      // Always cleanup resources
+      await this.cleanup()
     }
   }
 
@@ -450,14 +454,18 @@ export class JobProcessor {
           recoveryState.lastSuccessfulRecord = recordIndex
           const progress = Math.floor((generatedCount / total_records) * 100)
 
-          await this.supabase
-            .from("jobs")
-            .update({
-              generated_records: generatedCount,
-              progress: progress,
-              recovery_state: recoveryState,
-            })
-            .eq("id", job_id)
+          // Use safe progress update function
+          const { error: progressError } = await this.supabase.rpc('update_job_progress_safe', {
+            p_job_id: job_id,
+            p_generated_records: generatedCount,
+            p_progress: progress,
+            p_recovery_state: recoveryState
+          })
+          
+          if (progressError) {
+            console.error(`[v0] Failed to update job progress:`, progressError)
+            throw new Error(`Failed to update job progress: ${progressError.message}`)
+          }
 
           console.log(`[v0][SERVER][JobProcessor] Generated record ${generatedCount}/${total_records} (${progress}%)`)
         } catch (error) {
@@ -482,7 +490,10 @@ export class JobProcessor {
           created_at: new Date().toISOString(),
         }))
 
-        const { error: insertError } = await this.supabase.from("generated_data").insert(recordsToInsert)
+        // Use transaction for batch insert
+        const { error: insertError } = await this.supabase.rpc('insert_generated_data_batch', {
+          p_records: recordsToInsert
+        })
 
         if (insertError) {
           console.error(`[v0][SERVER][JobProcessor] Failed to save batch:`, insertError)
@@ -626,25 +637,30 @@ export class JobProcessor {
         count: imagesPerRecord,
       })
 
-      await this.supabase.from("media").insert({
+      // Generate a UUID for the record_id
+      const recordId = crypto.randomUUID()
+      
+      const { error: mediaError } = await this.supabase.from("media").insert({
         tenant_id: job.tenant_id,
         job_id: job.job_id,
-        record_id: `record_${recordIndex}`,
-        field_name: field.name,
+        record_id: recordId,
         s3_key: imageResult.s3Key,
-        s3_url: imageResult.url,
-        content_type: "image/png",
-        file_size: imageResult.fileSize || 0,
+        s3_bucket: "grainplaza-synthetic-data-bucket",
         md5_hash: imageResult.md5Hash || "",
-        model_used: imageModel,
-        prompt_used: contextPrompt,
-        generation_metadata: {
-          recordData: recordData,
-          fieldDescription: field.description,
-          imagesPerRecord,
-          generationTime: new Date().toISOString(),
-        },
+        file_size: imageResult.fileSize || 0,
+        model_name: imageModel,
+        prompt: contextPrompt,
       })
+
+      if (mediaError) {
+        console.error(`[v0] Failed to insert media record:`, mediaError)
+        await this.logJobMessage(job.job_id, "error", `Failed to insert media record: ${mediaError.message}`, {
+          error: mediaError,
+          s3Key: imageResult.s3Key,
+        })
+      } else {
+        console.log(`[v0] Media record inserted successfully`)
+      }
 
       await this.logJobMessage(job.job_id, "info", `Generated AI image for field: ${field.name}`, {
         model: imageModel,

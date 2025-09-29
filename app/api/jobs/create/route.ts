@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
     console.log("[v0] Schema found:", schema.name)
 
     console.log("[v0] Creating job record...")
-    // Create job
+    // Create job with all required fields
     const { data: job, error: jobError } = await supabase
       .from("jobs")
       .insert({
@@ -58,6 +58,16 @@ export async function POST(request: NextRequest) {
         config,
         created_by: user.id,
         status: "pending",
+        generated_records: 0,
+        progress: 0,
+        can_be_cancelled: true,
+        can_be_paused: true,
+        can_be_retried: true,
+        recovery_state: {
+          lastSuccessfulRecord: -1,
+          failedRecords: [],
+          retryAttempts: {}
+        }
       })
       .select()
       .single()

@@ -6,7 +6,15 @@
     "build": "next build",
     "dev": "next dev",
     "lint": "next lint",
-    "start": "next start"
+    "start": "next start",
+    "db:migrate": "node scripts/migrate.js",
+    "db:migrate:check": "node scripts/migrate.js --check",
+    "db:migrate:reset": "node scripts/migrate.js --reset",
+    "db:migrate:file": "node scripts/migrate.js --file",
+    "db:status": "node scripts/migrate.js --check",
+    "db:jobs": "psql \"$POSTGRES_URL\" -c \"SELECT id, name, status, total_records, generated_records, progress, created_at FROM jobs ORDER BY created_at DESC LIMIT 10;\"",
+    "db:tables": "psql \"$POSTGRES_URL\" -c \"SELECT schemaname, tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;\"",
+    "db:functions": "psql \"$POSTGRES_URL\" -c \"SELECT proname, prosrc FROM pg_proc WHERE pronamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public') ORDER BY proname;\""
   },
   "dependencies": {
     "@aws-sdk/client-s3": "latest",

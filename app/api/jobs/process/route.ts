@@ -3,6 +3,14 @@ import { JobProcessor } from "@/lib/job-processor"
 
 export async function POST(request: NextRequest) {
   try {
+    // Check for API key authentication
+    const authHeader = request.headers.get("authorization")
+    const expectedKey = process.env.JOB_PROCESSOR_SECRET
+    
+    if (!authHeader || !expectedKey || authHeader !== `Bearer ${expectedKey}`) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
     const processor = new JobProcessor()
     const processed = await processor.processNextJob()
 
