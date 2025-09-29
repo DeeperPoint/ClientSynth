@@ -38,6 +38,8 @@ if (!DB_URL) {
 
 // Migration files in order
 const MIGRATIONS = [
+  '000_local_schema.sql',
+  '001_local_functions.sql',
   '001_create_core_schema.sql',
   '002_profile_trigger.sql',
   '003_tenant_onboarding.sql',

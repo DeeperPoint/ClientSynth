@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js"
+import { pool } from "@/lib/database/client"
 import { AIGenerator, type GenerationContext } from "@/lib/ai-generator"
 import { ImageGenerator } from "@/lib/image-generator"
 import { S3Uploader } from "@/lib/s3-uploader"
