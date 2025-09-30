@@ -1,33 +1,33 @@
-# # Node / legacy v0 artifacts
-# v0 (version 0)/.next/
-# v0 (version 0)/node_modules/
-# v0 (version 0)/.vercel/
+# Node / legacy v0 artifacts
+v0 (version 0)/.next/
+v0 (version 0)/node_modules/
+v0 (version 0)/.vercel/
 
-# # Python caches and venvs
-# # .venv/
-# # __pycache__/
-# # *.py[cod]
-# # *$py.class
-# # .pytest_cache/
-# # .mypy_cache/
-# # .ruff_cache/
-# # .cache/
-# # .coverage
-# # coverage.xml
-# # htmlcov/
+# Python caches and venvs
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.coverage
+coverage.xml
+htmlcov/
 
-# # Project-specific python ignores
-# backend/.venv/
-# backend/**/__pycache__/
-# backend/**/*.pyc
+# Project-specific python ignores
+backend/.venv/
+backend/**/__pycache__/
+backend/**/*.pyc
 
-# # Local env and secrets
-# backend/.env
+# Local env and secrets
+backend/.env
 
-# # Local storage and exports
-# /tmp/clientsynth/
+# Local storage and exports
+/tmp/clientsynth/
 
-# # OS files
-# .DS_Store
-# Thumbs.db
+# OS files
+.DS_Store
+Thumbs.db
 
