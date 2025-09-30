@@ -1,0 +1,780 @@
+# Cursor AI Assistant Ignore File
+# Files and directories to exclude from AI analysis
+
+# Dependencies
+node_modules/
+.pnpm-store/
+.pnpm-debug.log*
+
+# Build outputs
+.next/
+out/
+dist/
+build/
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# Dependency directories
+jspm_packages/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional stylelint cache
+.stylelintcache
+
+# Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variable files
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+
+# parcel-bundler cache (https://parceljs.org/)
+.cache
+.parcel-cache
+
+# Next.js build output
+.next
+out
+
+# Nuxt.js build / generate output
+.nuxt
+dist
+
+# Gatsby files
+.cache/
+public
+
+# Vuepress build output
+.vuepress/dist
+
+# Serverless directories
+.serverless/
+
+# FuseBox cache
+.fusebox/
+
+# DynamoDB Local files
+.dynamodb/
+
+# TernJS port file
+.tern-port
+
+# Stores VSCode versions used for testing VSCode extensions
+.vscode-test
+
+# yarn v2
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+.temp/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Media files (too large for AI analysis)
+*.mp4
+*.avi
+*.mov
+*.wmv
+*.flv
+*.webm
+*.mkv
+*.mp3
+*.wav
+*.flac
+*.aac
+*.ogg
+*.wma
+
+# Image files (unless specifically needed)
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.svg
+*.webp
+*.ico
+
+# Archive files
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+*.bz2
+
+# Large data files
+*.csv
+*.json
+*.xml
+*.sql
+*.dump
+
+# Generated files
+*.generated.*
+*.auto.*
+
+# Test files that might be large
+test-data/
+fixtures/
+mocks/
+
+# Documentation that might be large
+docs/
+documentation/
+
+# Configuration files that might contain secrets
+config/
+secrets/
+.secrets/
+
+# Lock files (usually not needed for AI analysis)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Git files
+.git/
+.gitignore
+
+# Docker files
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Kubernetes files
+*.yaml
+*.yml
+k8s/
+
+# Terraform files
+*.tf
+*.tfstate
+*.tfvars
+
+# CI/CD files
+.github/
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+azure-pipelines.yml
+
+# Monitoring and logging
+logs/
+*.log
+monitoring/
+
+# Analytics and tracking
+analytics/
+tracking/
+
+# Third-party integrations
+integrations/
+plugins/
+
+# Generated documentation
+docs/generated/
+api-docs/
+
+# Large test files
+test/
+tests/
+__tests__/
+spec/
+specs/
+
+# Performance testing
+benchmarks/
+performance/
+
+# Security files
+security/
+vulnerabilities/
+
+# Compliance files
+compliance/
+audit/
+
+# Legal files
+legal/
+terms/
+privacy/
+
+# Marketing files
+marketing/
+assets/
+
+# Design files
+design/
+mockups/
+wireframes/
+
+# Content files
+content/
+copy/
+text/
+
+# Local development files
+.local/
+dev/
+development/
+
+# Production files
+prod/
+production/
+
+# Staging files
+staging/
+stage/
+
+# Feature flags
+feature-flags/
+flags/
+
+# A/B testing
+ab-testing/
+experiments/
+
+# Analytics data
+analytics-data/
+metrics/
+
+# User data
+user-data/
+profiles/
+
+# Session data
+sessions/
+cookies/
+
+# Cache files
+cache/
+.cache/
+
+# Temporary uploads
+uploads/
+temp-uploads/
+
+# Generated assets
+generated-assets/
+compiled-assets/
+
+# Build artifacts
+artifacts/
+build-artifacts/
+
+# Deployment files
+deploy/
+deployment/
+
+# Infrastructure files
+infrastructure/
+infra/
+
+# Monitoring files
+monitoring/
+metrics/
+dashboards/
+
+# Alerting files
+alerts/
+notifications/
+
+# Backup files
+backups/
+backup/
+
+# Archive files
+archives/
+archive/
+
+# Old files
+old/
+legacy/
+deprecated/
+
+# Unused files
+unused/
+obsolete/
+
+# Duplicate files
+duplicates/
+copies/
+
+# Large files
+large-files/
+big-files/
+
+# Binary files
+binaries/
+executables/
+
+# Compiled files
+compiled/
+built/
+
+# Minified files
+minified/
+compressed/
+
+# Optimized files
+optimized/
+processed/
+
+# Generated code
+generated/
+auto-generated/
+
+# Scaffolded files
+scaffolded/
+templates/
+
+# Boilerplate files
+boilerplate/
+skeleton/
+
+# Example files
+examples/
+samples/
+
+# Demo files
+demos/
+demos/
+
+# Tutorial files
+tutorials/
+guides/
+
+# Documentation files
+documentation/
+docs/
+
+# README files
+README.md
+readme.md
+
+# License files
+LICENSE
+license.txt
+
+# Changelog files
+CHANGELOG.md
+changelog.txt
+
+# Contributing files
+CONTRIBUTING.md
+contributing.txt
+
+# Code of conduct files
+CODE_OF_CONDUCT.md
+code-of-conduct.txt
+
+# Issue templates
+.github/ISSUE_TEMPLATE/
+
+# Pull request templates
+.github/PULL_REQUEST_TEMPLATE/
+
+# Workflow files
+.github/workflows/
+
+# Security files
+.github/SECURITY.md
+security.md
+
+# Support files
+.github/SUPPORT.md
+support.md
+
+# Funding files
+.github/FUNDING.yml
+funding.yml
+
+# Sponsors files
+.github/SPONSORS.md
+sponsors.md
+
+# Community files
+.github/community/
+
+# Discussion files
+.github/discussions/
+
+# Wiki files
+.wiki/
+
+# Pages files
+.github/pages/
+
+# Actions files
+.github/actions/
+
+# Apps files
+.github/apps/
+
+# Bots files
+.github/bots/
+
+# Hooks files
+.github/hooks/
+
+# Settings files
+.github/settings/
+
+# Topics files
+.github/topics/
+
+# Labels files
+.github/labels/
+
+# Milestones files
+.github/milestones/
+
+# Projects files
+.github/projects/
+
+# Releases files
+.github/releases/
+
+# Tags files
+.github/tags/
+
+# Branches files
+.github/branches/
+
+# Commits files
+.github/commits/
+
+# Blobs files
+.github/blobs/
+
+# Trees files
+.github/trees/
+
+# Refs files
+.github/refs/
+
+# Contents files
+.github/contents/
+
+# Compare files
+.github/compare/
+
+# Commits files
+.github/commits/
+
+# Pulls files
+.github/pulls/
+
+# Issues files
+.github/issues/
+
+# Comments files
+.github/comments/
+
+# Events files
+.github/events/
+
+# Hooks files
+.github/hooks/
+
+# Installations files
+.github/installations/
+
+# Organizations files
+.github/organizations/
+
+# Repositories files
+.github/repositories/
+
+# Users files
+.github/users/
+
+# Teams files
+.github/teams/
+
+# Members files
+.github/members/
+
+# Collaborators files
+.github/collaborators/
+
+# Invitations files
+.github/invitations/
+
+# Keys files
+.github/keys/
+
+# Deployments files
+.github/deployments/
+
+# Statuses files
+.github/statuses/
+
+# Check runs files
+.github/check-runs/
+
+# Check suites files
+.github/check-suites/
+
+# Code scanning files
+.github/code-scanning/
+
+# Dependabot files
+.github/dependabot/
+
+# Secret scanning files
+.github/secret-scanning/
+
+# Security advisories files
+.github/security-advisories/
+
+# Vulnerability alerts files
+.github/vulnerability-alerts/
+
+# Code owners files
+.github/CODEOWNERS
+
+# Issue templates files
+.github/ISSUE_TEMPLATE/
+
+# Pull request templates files
+.github/PULL_REQUEST_TEMPLATE/
+
+# Workflow files files
+.github/workflows/
+
+# Security files files
+.github/SECURITY.md
+
+# Support files files
+.github/SUPPORT.md
+
+# Funding files files
+.github/FUNDING.yml
+
+# Sponsors files files
+.github/SPONSORS.md
+
+# Community files files
+.github/community/
+
+# Discussion files files
+.github/discussions/
+
+# Wiki files files
+.wiki/
+
+# Pages files files
+.github/pages/
+
+# Actions files files
+.github/actions/
+
+# Apps files files
+.github/apps/
+
+# Bots files files
+.github/bots/
+
+# Hooks files files
+.github/hooks/
+
+# Settings files files
+.github/settings/
+
+# Topics files files
+.github/topics/
+
+# Labels files files
+.github/labels/
+
+# Milestones files files
+.github/milestones/
+
+# Projects files files
+.github/projects/
+
+# Releases files files
+.github/releases/
+
+# Tags files files
+.github/tags/
+
+# Branches files files
+.github/branches/
+
+# Commits files files
+.github/commits/
+
+# Blobs files files
+.github/blobs/
+
+# Trees files files
+.github/trees/
+
+# Refs files files
+.github/refs/
+
+# Contents files files
+.github/contents/
+
+# Compare files files
+.github/compare/
+
+# Commits files files
+.github/commits/
+
+# Pulls files files
+.github/pulls/
+
+# Issues files files
+.github/issues/
+
+# Comments files files
+.github/comments/
+
+# Events files files
+.github/events/
+
+# Hooks files files
+.github/hooks/
+
+# Installations files files
+.github/installations/
+
+# Organizations files files
+.github/organizations/
+
+# Repositories files files
+.github/repositories/
+
+# Users files files
+.github/users/
+
+# Teams files files
+.github/teams/
+
+# Members files files
+.github/members/
+
+# Collaborators files files
+.github/collaborators/
+
+# Invitations files files
+.github/invitations/
+
+# Keys files files
+.github/keys/
+
+# Deployments files files
+.github/deployments/
+
+# Statuses files files
+.github/statuses/
+
+# Check runs files files
+.github/check-runs/
+
+# Check suites files files
+.github/check-suites/
+
+# Code scanning files files
+.github/code-scanning/
+
+# Dependabot files files
+.github/dependabot/
+
+# Secret scanning files files
+.github/secret-scanning/
+
+# Security advisories files files
+.github/security-advisories/
+
+# Vulnerability alerts files files
+.github/vulnerability-alerts/
+
+# Code owners files files
+.github/CODEOWNERS
+
+
