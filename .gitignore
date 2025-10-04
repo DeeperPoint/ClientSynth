@@ -1,3 +1,7 @@
+# Google service account keys (do not commit)
+backend/*.json
+backend/keys/*.json
+*.secret.json
 # Node / legacy v0 artifacts
 v0 (version 0)/.next/
 v0 (version 0)/node_modules/
@@ -31,3 +35,4 @@ backend/.env
 .DS_Store
 Thumbs.db
 
+clientsynth-*.json

@@ -1,5 +1,4 @@
-import { createServerClient } from "@supabase/ssr"
-import { cookies } from "next/headers"
+// import { createServerClient } from "@supabase/ssr" // disabled in local backend mode
 
 export interface GenerationPrediction {
   estimatedDuration: number
@@ -34,16 +33,11 @@ export interface TrendAnalysis {
 }
 
 export class PredictiveAnalytics {
-  private supabase
+  // Supabase disabled in local backend mode
+  // private supabase
 
   constructor() {
-    this.supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      cookies: {
-        get: (name: string) => cookies().get(name)?.value,
-        set: () => {},
-        remove: () => {},
-      },
-    })
+    // Supabase disabled in local backend mode
   }
 
   async predictGenerationOutcome(tenantId: string, jobConfig: Record<string, any>): Promise<GenerationPrediction> {
@@ -96,20 +90,9 @@ export class PredictiveAnalytics {
       const startDate = new Date(endDate.getTime() - periodDays * 24 * 60 * 60 * 1000)
 
       // Get jobs data for the period
-      const { data: jobs, error: jobsError } = await this.supabase
-        .from("jobs")
-        .select("*")
-        .eq("tenant_id", tenantId)
-        .gte("created_at", startDate.toISOString())
-        .lte("created_at", endDate.toISOString())
-        .order("created_at")
-
-      if (jobsError) {
-        console.error("[v0] Error fetching jobs for trend analysis:", jobsError)
-        throw jobsError
-      }
-
-      if (!jobs || jobs.length === 0) {
+      // Supabase disabled: return empty trend analysis
+      const jobs: any[] = []
+      if (jobs.length === 0) {
         console.log("[v0] No jobs found for trend analysis")
         return this.getEmptyTrendAnalysis(periodDays)
       }
@@ -145,21 +128,9 @@ export class PredictiveAnalytics {
   private async getHistoricalData(tenantId: string, jobConfig: Record<string, any>): Promise<any[]> {
     console.log("[v0] Getting historical data for prediction")
 
-    const { data, error } = await this.supabase
-      .from("jobs")
-      .select("*")
-      .eq("tenant_id", tenantId)
-      .eq("status", "completed")
-      .order("created_at", { ascending: false })
-      .limit(50)
-
-    if (error) {
-      console.error("[v0] Error fetching historical data:", error)
-      return []
-    }
-
-    console.log("[v0] Found historical jobs:", data?.length || 0)
-    return data || []
+    // Supabase disabled: return empty historical dataset
+    console.log("[v0] Supabase disabled, returning empty historical data")
+    return []
   }
 
   private predictDuration(jobConfig: Record<string, any>, historicalData: any[]): number {

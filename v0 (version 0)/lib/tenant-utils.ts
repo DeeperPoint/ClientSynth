@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server"
+import { apiFetch } from "@/lib/backend-client"
 
 export interface Tenant {
   id: string
@@ -14,64 +14,31 @@ export interface TenantWithRole extends Tenant {
 }
 
 export async function getUserTenants(userId: string): Promise<Tenant[]> {
-  const supabase = await createClient()
-
-  const { data, error } = await supabase
-    .from("tenants")
-    .select(`
-      id,
-      name,
-      slug,
-      user_tenant_roles!inner(role)
-    `)
-    .eq("user_tenant_roles.user_id", userId)
-    .order("name")
-
-  if (error) {
-    console.error("Error fetching user tenants:", error)
-    return []
-  }
-
-  return (data as TenantWithRole[]).map((tenant) => ({
-    id: tenant.id,
-    name: tenant.name,
-    slug: tenant.slug,
-    role: tenant.user_tenant_roles[0]?.role || "member",
+  const res = await apiFetch("/api/v1/tenants/")
+  if (!res.ok) return []
+  const data = await res.json()
+  return (Array.isArray(data) ? data : []).map((t: any) => ({
+    id: String(t.id),
+    name: t.name ?? t.slug ?? "Tenant",
+    slug: t.slug ?? String(t.id),
+    role: "owner",
   }))
 }
 
 export async function createTenantForUser(userId: string, tenantName: string): Promise<string | null> {
-  const supabase = await createClient()
-
   // Create slug from name
   const slug = tenantName
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
-
-  // Create tenant
-  const { data: tenant, error: tenantError } = await supabase
-    .from("tenants")
-    .insert({ name: tenantName, slug })
-    .select("id")
-    .single()
-
-  if (tenantError) {
-    console.error("Error creating tenant:", tenantError)
-    return null
-  }
-
-  // Add user as owner
-  const { error: roleError } = await supabase
-    .from("user_tenant_roles")
-    .insert({ user_id: userId, tenant_id: tenant.id, role: "owner" })
-
-  if (roleError) {
-    console.error("Error adding user role:", roleError)
-    return null
-  }
-
-  return tenant.id
+  const res = await apiFetch("/api/v1/tenants/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: tenantName, slug }),
+  })
+  if (!res.ok) return null
+  const tenant = await res.json()
+  return String(tenant.id)
 }
 
 export async function ensureUserHasTenant(userId: string, userEmail: string): Promise<string | null> {
@@ -81,17 +48,13 @@ export async function ensureUserHasTenant(userId: string, userEmail: string): Pr
     return tenants[0].id
   }
 
-  // Create default tenant
-  const supabase = await createClient()
-  const { data, error } = await supabase.rpc("create_default_tenant_for_user", {
-    user_id: userId,
-    user_email: userEmail,
+  // Create default tenant via backend
+  const res = await apiFetch("/api/v1/tenants/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Default Tenant" }),
   })
-
-  if (error) {
-    console.error("Error creating default tenant:", error)
-    return null
-  }
-
-  return data
+  if (!res.ok) return null
+  const t = await res.json()
+  return String(t.id)
 }

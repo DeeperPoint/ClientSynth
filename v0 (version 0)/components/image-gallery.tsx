@@ -1,12 +1,12 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
 import { Download, Eye, RefreshCw, Trash2, ZoomIn } from "lucide-react"
+import { apiFetch } from "@/lib/backend-client"
 
 interface MediaItem {
   id: string
@@ -32,7 +32,7 @@ export function ImageGallery({ jobId, tenantId }: ImageGalleryProps) {
   const [selectedImage, setSelectedImage] = useState<MediaItem | null>(null)
   const [regenerating, setRegenerating] = useState<string | null>(null)
 
-  const supabase = createClient()
+  // TODO: Replace with backend image listing if needed
 
   useEffect(() => {
     loadImages()
@@ -40,15 +40,13 @@ export function ImageGallery({ jobId, tenantId }: ImageGalleryProps) {
 
   const loadImages = async () => {
     try {
-      const { data, error } = await supabase
-        .from("media")
-        .select("*")
-        .eq("job_id", jobId)
-        .eq("tenant_id", tenantId)
-        .order("created_at", { ascending: false })
-
-      if (error) throw error
-      setImages(data || [])
+      const res = await apiFetch(`/api/v1/jobs/${jobId}/media`)
+      if (res.ok) {
+        const data = await res.json()
+        setImages(Array.isArray(data) ? data : [])
+      } else {
+        setImages([])
+      }
     } catch (error) {
       console.error("Failed to load images:", error)
     } finally {
@@ -87,9 +85,8 @@ export function ImageGallery({ jobId, tenantId }: ImageGalleryProps) {
 
   const deleteImage = async (item: MediaItem) => {
     try {
-      const { error } = await supabase.from("media").delete().eq("id", item.id)
-
-      if (error) throw error
+      const res = await apiFetch(`/api/v1/media/${item.id}`, { method: "DELETE" })
+      if (!res.ok) throw new Error("Failed to delete image")
       setImages(images.filter((img) => img.id !== item.id))
     } catch (error) {
       console.error("Failed to delete image:", error)

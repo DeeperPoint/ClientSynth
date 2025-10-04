@@ -1,5 +1,4 @@
-import { createServerClient } from "@supabase/ssr"
-import { cookies } from "next/headers"
+// import { createServerClient } from "@supabase/ssr" // disabled in local backend mode
 import { SeedDatabase, type Seed } from "../seeding/seed-database"
 
 export interface QualityPrediction {
@@ -24,17 +23,9 @@ export interface QualityFeedback {
 }
 
 export class SeedQualityPredictor {
-  private supabase
   private seedDb: SeedDatabase
 
   constructor() {
-    this.supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      cookies: {
-        get: (name: string) => cookies().get(name)?.value,
-        set: () => {},
-        remove: () => {},
-      },
-    })
     this.seedDb = new SeedDatabase()
   }
 
@@ -43,15 +34,17 @@ export class SeedQualityPredictor {
 
     try {
       // Get seed information
-      const { data: seedData, error: seedError } = await this.supabase
-        .from("seeds")
-        .select("*")
-        .eq("id", seedId)
-        .single()
-
-      if (seedError || !seedData) {
-        console.error("[v0] Seed not found:", seedError)
-        throw new Error("Seed not found")
+      // In local backend mode, we don't fetch from Supabase; create a minimal seed-like object
+      const seedData: Seed = {
+        id: seedId,
+        category_id: "",
+        content: context?.content || "",
+        seed_type: (context?.seedType as any) || "text_template",
+        quality_score: 50,
+        metadata: {},
+        is_active: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       }
 
       // Get historical feedback
@@ -113,20 +106,7 @@ export class SeedQualityPredictor {
     console.log("[v0] Recording quality feedback for seed:", feedback.seedId)
 
     try {
-      const { error } = await this.supabase.from("seed_quality_feedback").insert({
-        seed_id: feedback.seedId,
-        job_id: feedback.jobId,
-        tenant_id: tenantId,
-        quality_rating: feedback.rating,
-        feedback_type: feedback.feedbackType,
-        feedback_data: feedback.feedbackData,
-        created_by: userId,
-      })
-
-      if (error) {
-        console.error("[v0] Error recording quality feedback:", error)
-        throw error
-      }
+      // No-op: record in backend when implemented; skip here.
 
       // Update seed quality score based on feedback
       await this.updateSeedQualityScore(feedback.seedId)
@@ -141,19 +121,8 @@ export class SeedQualityPredictor {
   private async getHistoricalFeedback(seedId: string): Promise<any[]> {
     console.log("[v0] Getting historical feedback for seed:", seedId)
 
-    const { data, error } = await this.supabase
-      .from("seed_quality_feedback")
-      .select("*")
-      .eq("seed_id", seedId)
-      .order("created_at", { ascending: false })
-
-    if (error) {
-      console.error("[v0] Error fetching historical feedback:", error)
-      return []
-    }
-
-    console.log("[v0] Found historical feedback entries:", data?.length || 0)
-    return data || []
+    console.log("[v0] Historical feedback disabled in local backend mode")
+    return []
   }
 
   private async getUsageStatistics(seedId: string): Promise<{
@@ -164,20 +133,8 @@ export class SeedQualityPredictor {
     console.log("[v0] Getting usage statistics for seed:", seedId)
 
     try {
-      const { data, error } = await this.supabase.from("seed_usage").select("*").eq("seed_id", seedId)
-
-      if (error) {
-        console.error("[v0] Error fetching usage statistics:", error)
-        return { totalUsage: 0, recentUsage: 0, successRate: 0 }
-      }
-
-      const totalUsage = data?.length || 0
-      const recentUsage =
-        data?.filter((usage) => {
-          const usedAt = new Date(usage.used_at)
-          const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-          return usedAt >= weekAgo
-        }).length || 0
+      const totalUsage = 0
+      const recentUsage = 0
 
       // Success rate would be calculated based on job completion rates
       // For now, we'll use a placeholder calculation

@@ -1,5 +1,4 @@
-import { createServerClient } from "@supabase/ssr"
-import { cookies } from "next/headers"
+// import { createServerClient } from "@supabase/ssr" // disabled in local backend mode
 import { PatternDetector } from "../variation/pattern-detector"
 import { DistributionManager } from "../variation/distribution-manager"
 
@@ -23,18 +22,13 @@ export interface PerformanceMetrics {
 }
 
 export class OptimizationEngine {
-  private supabase
+  // Supabase disabled in local backend mode
+  // private supabase
   private patternDetector: PatternDetector
   private distributionManager: DistributionManager
 
   constructor() {
-    this.supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      cookies: {
-        get: (name: string) => cookies().get(name)?.value,
-        set: () => {},
-        remove: () => {},
-      },
-    })
+    // Supabase disabled in local backend mode
     this.patternDetector = new PatternDetector()
     this.distributionManager = new DistributionManager()
   }
@@ -44,25 +38,9 @@ export class OptimizationEngine {
 
     try {
       // Get recent jobs for analysis
-      let jobQuery = this.supabase
-        .from("jobs")
-        .select("*")
-        .eq("tenant_id", tenantId)
-        .order("created_at", { ascending: false })
-        .limit(50)
-
-      if (jobId) {
-        jobQuery = jobQuery.eq("id", jobId)
-      }
-
-      const { data: jobs, error: jobsError } = await jobQuery
-
-      if (jobsError) {
-        console.error("[v0] Error fetching jobs for analysis:", jobsError)
-        throw jobsError
-      }
-
-      if (!jobs || jobs.length === 0) {
+      // Supabase disabled: return empty metrics
+      const jobs: any[] = []
+      if (jobs.length === 0) {
         console.log("[v0] No jobs found for performance analysis")
         return {
           averageGenerationTime: 0,
@@ -251,22 +229,15 @@ export class OptimizationEngine {
 
     try {
       // Get generated data for analysis
-      const { data: generatedData, error } = await this.supabase
-        .from("generated_data")
-        .select("data")
-        .in(
-          "job_id",
-          jobs.map((job) => job.id),
-        )
-        .limit(1000) // Sample for performance
-
-      if (error || !generatedData) {
+      // Supabase disabled
+      const generatedData: Array<{ data: any }> | null = null as any
+      if (!generatedData || (Array.isArray(generatedData) && generatedData.length === 0)) {
         console.log("[v0] No generated data found for diversity analysis")
         return 50 // Default neutral score
       }
 
       // Analyze patterns in the data
-      const allRecords = generatedData.map((item) => item.data)
+      const allRecords = generatedData.map((item: { data: any }) => item.data)
       const patterns = await this.patternDetector.detectPatterns(allRecords, jobs[0].id)
 
       // Calculate diversity based on pattern variety
@@ -290,15 +261,9 @@ export class OptimizationEngine {
 
     try {
       // Get quality feedback for these jobs
-      const { data: feedback, error } = await this.supabase
-        .from("seed_quality_feedback")
-        .select("quality_rating")
-        .in(
-          "job_id",
-          jobs.map((job) => job.id),
-        )
-
-      if (error || !feedback || feedback.length === 0) {
+      // Supabase disabled
+      const feedback: any[] = []
+      if (feedback.length === 0) {
         console.log("[v0] No quality feedback found, using default score")
         return 75 // Default score when no feedback available
       }
@@ -342,122 +307,28 @@ export class OptimizationEngine {
   ): Promise<void> {
     console.log("[v0] Storing optimization suggestions:", suggestions.length)
 
-    try {
-      const suggestionRecords = suggestions.map((suggestion) => ({
-        tenant_id: tenantId,
-        job_id: jobId,
-        suggestion_type: suggestion.type,
-        suggestion_data: {
-          title: suggestion.title,
-          description: suggestion.description,
-          actionData: suggestion.actionData,
-          reasoning: suggestion.reasoning,
-        },
-        expected_improvement: suggestion.expectedImprovement / 100,
-        priority: suggestion.priority,
-      }))
-
-      const { error } = await this.supabase.from("optimization_suggestions").insert(suggestionRecords)
-
-      if (error) {
-        console.error("[v0] Error storing optimization suggestions:", error)
-      } else {
-        console.log("[v0] Optimization suggestions stored successfully")
-      }
-    } catch (error) {
-      console.error("[v0] Failed to store optimization suggestions:", error)
-    }
+    // Supabase disabled: skip persistence in local backend mode
+    console.log("[v0] Skipping suggestion persistence in local mode")
   }
 
   async getActiveSuggestions(tenantId: string, jobId?: string): Promise<OptimizationSuggestion[]> {
     console.log("[v0] Getting active optimization suggestions for tenant:", tenantId)
 
-    try {
-      let query = this.supabase
-        .from("optimization_suggestions")
-        .select("*")
-        .eq("tenant_id", tenantId)
-        .eq("status", "pending")
-        .gt("expires_at", new Date().toISOString())
-        .order("priority")
-        .order("expected_improvement", { ascending: false })
-
-      if (jobId) {
-        query = query.eq("job_id", jobId)
-      }
-
-      const { data, error } = await query
-
-      if (error) {
-        console.error("[v0] Error fetching active suggestions:", error)
-        return []
-      }
-
-      const suggestions = (data || []).map((record) => ({
-        id: record.id,
-        type: record.suggestion_type,
-        title: record.suggestion_data.title,
-        description: record.suggestion_data.description,
-        expectedImprovement: record.expected_improvement * 100,
-        priority: record.priority,
-        actionData: record.suggestion_data.actionData,
-        reasoning: record.suggestion_data.reasoning,
-      }))
-
-      console.log("[v0] Found active suggestions:", suggestions.length)
-      return suggestions
-    } catch (error) {
-      console.error("[v0] Error getting active suggestions:", error)
-      return []
-    }
+    // Supabase disabled: return empty list
+    return []
   }
 
   async applySuggestion(suggestionId: string, tenantId: string): Promise<void> {
     console.log("[v0] Applying optimization suggestion:", suggestionId)
 
-    try {
-      const { error } = await this.supabase
-        .from("optimization_suggestions")
-        .update({
-          status: "applied",
-          applied_at: new Date().toISOString(),
-        })
-        .eq("id", suggestionId)
-        .eq("tenant_id", tenantId)
-
-      if (error) {
-        console.error("[v0] Error applying suggestion:", error)
-        throw error
-      }
-
-      console.log("[v0] Optimization suggestion applied successfully")
-    } catch (error) {
-      console.error("[v0] Failed to apply suggestion:", error)
-      throw error
-    }
+    // Supabase disabled: no-op in local backend mode
+    console.log("[v0] Apply suggestion (no-op in local mode)")
   }
 
   async dismissSuggestion(suggestionId: string, tenantId: string): Promise<void> {
     console.log("[v0] Dismissing optimization suggestion:", suggestionId)
 
-    try {
-      const { error } = await this.supabase
-        .from("optimization_suggestions")
-        .update({
-          status: "dismissed",
-        })
-        .eq("id", suggestionId)
-        .eq("tenant_id", tenantId)
-
-      if (error) {
-        console.error("[v0] Error dismissing suggestion:", error)
-        throw error
-      }
-
-      console.log("[v0] Optimization suggestion dismissed successfully")
-    } catch (error) {
-      console.error("[v0] Failed to dismiss suggestion:", error)
-      throw error
-    }
+    // Supabase disabled: no-op in local backend mode
+    console.log("[v0] Dismiss suggestion (no-op in local mode)")
   }
 }

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClient } from "@/lib/supabase/client"
+import { apiFetch } from "@/lib/backend-client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -115,7 +115,6 @@ export default function ExportPage() {
   const [recordLimit, setRecordLimit] = useState("")
 
   const params = useParams()
-  const supabase = createClient()
 
   useEffect(() => {
     loadJobAndExports()
@@ -123,37 +122,37 @@ export default function ExportPage() {
 
   const loadJobAndExports = async () => {
     try {
-      // Load job details
-      const { data: jobData, error: jobError } = await supabase
-        .from("jobs")
-        .select(`
-          id,
-          name,
-          status,
-          total_records,
-          generated_records,
-          schemas(id, name, schema_definition)
-        `)
-        .eq("id", params.id)
-        .single()
-
-      if (jobError) throw jobError
-      setJob(jobData)
-      setExportName(`${jobData.name} Export`)
+      // Load job details from backend
+      const jobRes = await apiFetch(`/api/v1/jobs/${params.id}`)
+      if (!jobRes.ok) throw new Error(`Failed to load job (${jobRes.status})`)
+      const jobCore = await jobRes.json()
+      // Fetch schema for fields using schema_id
+      const schemaRes = await apiFetch(`/api/v1/schemas/${jobCore.schema_id}`)
+      const jobCombined: Job = {
+        id: jobCore.id,
+        name: jobCore.name || "Job",
+        status: jobCore.status,
+        total_records: jobCore.total_records || 0,
+        generated_records: jobCore.generated_records || jobCore.progress || 0,
+        schemas: { id: jobCore.schema_id || "", name: jobCore.schema_name || "", schema_definition: (await (async () => {
+          if (schemaRes.ok) {
+            try { const s = await schemaRes.json(); return s.schema_definition || {} } catch { return {} }
+          }
+          return {}
+        })()) },
+      }
+      setJob(jobCombined)
+      setExportName(`${jobCombined.name} Export`)
 
       // Initialize selected fields with all fields
-      const fields = jobData.schemas?.schema_definition?.fields || []
+      // Using fields from fetched schema if available
+      const schemaFields = jobCombined.schemas?.schema_definition?.fields || []
+      const fieldsToUse = schemaFields
+      setSelectedFields(fieldsToUse.map((f: any) => f.name))
       setSelectedFields(fields.map((f: any) => f.name))
 
-      // Load existing exports
-      const { data: exportsData, error: exportsError } = await supabase
-        .from("exports")
-        .select("*")
-        .eq("job_id", params.id)
-        .order("created_at", { ascending: false })
-
-      if (exportsError) throw exportsError
-      setExports(exportsData || [])
+      // TODO: Wire to backend exports listing if available; leaving empty for now
+      setExports([])
     } catch (error) {
       console.error("Error loading data:", error)
     } finally {
@@ -176,7 +175,8 @@ export default function ExportPage() {
         filters.limit = Number.parseInt(recordLimit)
       }
 
-      const response = await fetch("/api/exports/create", {
+      // Create export via backend if endpoint exists
+      const response = await apiFetch(`/api/v1/exports/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -186,18 +186,16 @@ export default function ExportPage() {
           filters,
         }),
       })
-
-      const result = await response.json()
-
       if (!response.ok) {
-        throw new Error(result.error || "Failed to create export")
+        const result = await response.json().catch(() => ({}))
+        throw new Error(result.detail || result.error || "Failed to create export")
       }
 
       // Reload exports
       await loadJobAndExports()
 
       // Reset form
-      setExportName(`${job.name} Export`)
+  setExportName(`${job.name} Export`)
       setFormat("csv")
       setRecordLimit("")
     } catch (error) {
@@ -231,7 +229,7 @@ export default function ExportPage() {
   }
 
   function estimateFileSize(): string {
-    const recordCount = recordLimit ? Number(recordLimit) : job.generated_records
+    const recordCount = recordLimit ? Number(recordLimit) : (job?.generated_records || 0)
     const fieldCount = selectedFields.length
 
     let bytesPerRecord = 0
@@ -262,7 +260,7 @@ export default function ExportPage() {
   }
 
   function estimateProcessingTime(): string {
-    const recordCount = recordLimit ? Number(recordLimit) : job.generated_records
+    const recordCount = recordLimit ? Number(recordLimit) : (job?.generated_records || 0)
 
     // Rough estimates based on format complexity
     const recordsPerSecond =

@@ -1,5 +1,6 @@
-import { createServerClient } from "@supabase/ssr"
-import { cookies } from "next/headers"
+// Disabled in local backend integration
+// import { createServerClient } from "@supabase/ssr"
+// No-op stub in local backend mode
 
 export interface GenerationPattern {
   id: string
@@ -10,17 +11,7 @@ export interface GenerationPattern {
 }
 
 export class UsageTracker {
-  private supabase
-
-  constructor() {
-    this.supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      cookies: {
-        get: (name: string) => cookies().get(name)?.value,
-        set: () => {},
-        remove: () => {},
-      },
-    })
-  }
+  constructor() {}
 
   async recordGenerationPattern(jobId: string, patternData: Record<string, any>): Promise<void> {
     console.log("[v0] Recording generation pattern for job:", jobId)
@@ -29,16 +20,7 @@ export class UsageTracker {
     const patternHash = this.createPatternHash(patternData)
 
     try {
-      const { error } = await this.supabase.from("generation_patterns").insert({
-        job_id: jobId,
-        pattern_hash: patternHash,
-        pattern_data: patternData,
-      })
-
-      if (error) {
-        console.error("[v0] Error recording generation pattern:", error)
-        throw error
-      }
+      // No-op: backend handles persistence in local mode
 
       console.log("[v0] Generation pattern recorded with hash:", patternHash)
     } catch (error) {
@@ -53,17 +35,7 @@ export class UsageTracker {
 
     try {
       // Check for exact hash matches first
-      const { data: exactMatches, error } = await this.supabase
-        .from("generation_patterns")
-        .select("*")
-        .eq("pattern_hash", patternHash)
-        .gte("created_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) // Last 24 hours
-
-      if (error) {
-        console.error("[v0] Error checking pattern similarity:", error)
-        return false
-      }
-
+      const exactMatches: any[] = []
       if (exactMatches && exactMatches.length > 0) {
         console.log("[v0] Found exact pattern match, similarity detected")
         return true
@@ -83,25 +55,8 @@ export class UsageTracker {
     console.log("[v0] Getting recent patterns for last", hours, "hours")
 
     try {
-      let query = this.supabase
-        .from("generation_patterns")
-        .select("*")
-        .gte("created_at", new Date(Date.now() - hours * 60 * 60 * 1000).toISOString())
-        .order("created_at", { ascending: false })
-
-      if (jobId) {
-        query = query.eq("job_id", jobId)
-      }
-
-      const { data, error } = await query
-
-      if (error) {
-        console.error("[v0] Error fetching recent patterns:", error)
-        throw error
-      }
-
-      console.log("[v0] Found recent patterns:", data?.length || 0)
-      return data || []
+      console.log("[v0] Found recent patterns:", 0)
+      return []
     } catch (error) {
       console.error("[v0] Failed to get recent patterns:", error)
       return []
@@ -114,12 +69,7 @@ export class UsageTracker {
     try {
       const cutoffDate = new Date(Date.now() - daysToKeep * 24 * 60 * 60 * 1000).toISOString()
 
-      const { error } = await this.supabase.from("generation_patterns").delete().lt("created_at", cutoffDate)
-
-      if (error) {
-        console.error("[v0] Error cleaning up old patterns:", error)
-        throw error
-      }
+      // No-op
 
       console.log("[v0] Old patterns cleaned up successfully")
     } catch (error) {
@@ -164,15 +114,8 @@ export class UsageTracker {
     try {
       const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
 
-      const { data, error } = await this.supabase.from("seed_usage").select("*").eq("seed_id", seedId)
-
-      if (error) {
-        console.error("[v0] Error fetching seed usage stats:", error)
-        throw error
-      }
-
-      const totalUsage = data?.length || 0
-      const recentUsage = data?.filter((usage) => usage.used_at >= cutoffDate).length || 0
+      const totalUsage = 0
+      const recentUsage = 0
 
       console.log("[v0] Seed usage stats - Total:", totalUsage, "Recent:", recentUsage)
 

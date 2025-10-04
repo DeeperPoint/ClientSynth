@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClient } from "@/lib/supabase/client"
+import { apiFetch } from "@/lib/backend-client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
@@ -31,7 +31,7 @@ export default function SchemasPage() {
   const [schemas, setSchemas] = useState<Schema[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [deletingId, setDeletingId] = useState<string | null>(null)
-  const supabase = createClient()
+  // Backend-only mode
 
   useEffect(() => {
     loadSchemas()
@@ -39,21 +39,13 @@ export default function SchemasPage() {
 
   const loadSchemas = async () => {
     try {
-      const { data, error } = await supabase
-        .from("schemas")
-        .select(`
-          id,
-          name,
-          description,
-          schema_definition,
-          created_at,
-          created_by,
-          profiles(full_name)
-        `)
-        .order("created_at", { ascending: false })
-
-      if (error) throw error
-      setSchemas(data || [])
+      const res = await apiFetch("/api/v1/schemas/")
+      if (res.ok) {
+        const data = await res.json()
+        setSchemas(Array.isArray(data) ? data : [])
+      } else {
+        setSchemas([])
+      }
     } catch (error) {
       console.error("Error loading schemas:", error)
       toast.error("Failed to load schemas")
@@ -69,10 +61,8 @@ export default function SchemasPage() {
 
     setDeletingId(schemaId)
     try {
-      const { error } = await supabase.from("schemas").delete().eq("id", schemaId)
-
-      if (error) throw error
-
+      const res = await apiFetch(`/api/v1/schemas/${schemaId}`, { method: "DELETE" })
+      if (!res.ok) throw new Error("Failed to delete schema")
       setSchemas(schemas.filter((s) => s.id !== schemaId))
       toast.success(`Schema "${schemaName}" deleted successfully`)
     } catch (error) {

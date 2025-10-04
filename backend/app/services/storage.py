@@ -1,5 +1,11 @@
 import os
+import time
 from typing import Tuple
+from urllib.parse import quote as urlquote
+
+import boto3
+from botocore.client import Config as BotoConfig
+from app.core.config import settings
 
 
 class LocalStorage:
@@ -15,5 +21,47 @@ class LocalStorage:
             f.write(data)
         url = f"file://{file_path}"
         return file_path, url
+
+
+class S3Storage:
+    def __init__(self, bucket: str | None = None, region: str | None = None, base_prefix: str = "clientsynth"):
+        self.bucket = bucket or settings.AWS_S3_BUCKET
+        self.region = region or settings.AWS_REGION
+        if not self.bucket:
+            raise RuntimeError("AWS_S3_BUCKET not configured")
+        self.base_prefix = base_prefix.strip("/")
+        self.s3 = boto3.client(
+            "s3",
+            region_name=self.region,
+            config=BotoConfig(s3={"addressing_style": "virtual"}),
+        )
+
+    def _key(self, tenant_id: str, job_id: str, record_id: str, field_name: str) -> str:
+        safe = lambda s: urlquote(s, safe="")
+        return f"{self.base_prefix}/{safe(tenant_id)}/{safe(job_id)}/{safe(record_id)}/{safe(field_name)}.png"
+
+    def save_generated(self, tenant_id: str, job_id: str, record_id: str, field_name: str, data: bytes) -> Tuple[str, str]:
+        key = self._key(tenant_id, job_id, record_id, field_name)
+        self.s3.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType="image/png")
+        # Try to form a public URL; if bucket is not public, we can presign
+        public_url = f"https://{self.bucket}.s3.{self.region}.amazonaws.com/{key}"
+        # Optionally presign (safer for private buckets)
+        try:
+            url = self.s3.generate_presigned_url(
+                "get_object", Params={"Bucket": self.bucket, "Key": key}, ExpiresIn=3600
+            )
+        except Exception:
+            url = public_url
+        return key, url
+
+
+def get_storage():
+    if settings.AWS_S3_BUCKET:
+        try:
+            return S3Storage()
+        except Exception:
+            # Fallback to local if misconfigured
+            return LocalStorage()
+    return LocalStorage()
 
 

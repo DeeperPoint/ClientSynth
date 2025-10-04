@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { createClient } from "@/lib/supabase/client"
+// Using FastAPI backend auth; store JWT locally
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
+import { apiFetch, setToken } from "@/lib/backend-client"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
@@ -20,28 +21,26 @@ export default function LoginPage() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    const supabase = createClient()
     setIsLoading(true)
     setError(null)
 
-    console.log("[v0] Starting login process with email:", email)
-    console.log("[v0] Supabase URL:", process.env.NEXT_PUBLIC_SUPABASE_URL)
-    console.log("[v0] Supabase Anon Key exists:", !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
-
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
+      const form = new URLSearchParams()
+      form.set('username', email)
+      form.set('password', password)
+      const res = await apiFetch('/api/v1/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: form.toString(),
       })
-
-      console.log("[v0] Login response error:", error)
-
-      if (error) throw error
-
-      console.log("[v0] Login successful, redirecting to dashboard")
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.detail || data.error || `Login failed (${res.status})`)
+      }
+      const data = await res.json()
+      if (data?.access_token) setToken(data.access_token)
       router.push("/dashboard")
     } catch (error: unknown) {
-      console.log("[v0] Login error caught:", error)
       setError(error instanceof Error ? error.message : "An error occurred")
     } finally {
       setIsLoading(false)

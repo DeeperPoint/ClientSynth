@@ -3,9 +3,11 @@
 import type React from "react"
 
 import { useState, useEffect } from "react"
-import type { User } from "@supabase/supabase-js"
-import { createClient } from "@/lib/supabase/client"
+type User = { id: string; email?: string | null }
+import { apiFetch } from "@/lib/backend-client"
 import { TenantSwitcher } from "@/components/tenant-switcher"
+import { getCurrentTenantId, setCurrentTenantId, pickCurrentTenant } from "@/lib/tenant-selection"
+import { TenantProvider } from "@/lib/tenant-context"
 import { Button } from "@/components/ui/button"
 import { LogOut, Settings, UserIcon, FileText, Play, Download } from "lucide-react"
 import {
@@ -40,7 +42,6 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
   const [isLoading, setIsLoading] = useState(true)
   const router = useRouter()
   const pathname = usePathname()
-  const supabase = createClient()
 
   useEffect(() => {
     loadUserData()
@@ -48,41 +49,28 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
 
   const loadUserData = async () => {
     try {
-      // Load profile
-      const { data: profileData } = await supabase.from("profiles").select("*").eq("id", user.id).single()
+      // Load profile (placeholder until backend profile exists)
+      setProfile({ full_name: user.email?.split("@")[0] || "User" })
 
-      setProfile(profileData)
-
-      // Load tenants
-      const { data: tenantsData } = await supabase
-        .from("tenants")
-        .select(`
-          id,
-          name,
-          slug,
-          user_tenant_roles!inner(role)
-        `)
-        .eq("user_tenant_roles.user_id", user.id)
-        .order("name")
-
-      if (tenantsData) {
-        const formattedTenants = tenantsData.map((tenant: any) => ({
-          id: tenant.id,
-          name: tenant.name,
-          slug: tenant.slug,
-          role: tenant.user_tenant_roles[0]?.role || "member",
+      // Load tenants from backend
+      const tenantsRes = await apiFetch("/api/v1/tenants/")
+      if (tenantsRes.ok) {
+        const data = await tenantsRes.json()
+        const formattedTenants = (Array.isArray(data) ? data : []).map((t: any) => ({
+          id: String(t.id),
+          name: t.name ?? t.slug ?? "Tenant",
+          slug: t.slug ?? String(t.id),
+          role: "owner",
         }))
         setTenants(formattedTenants)
-
-        // Set first tenant as current if none selected
-        if (formattedTenants.length > 0 && !currentTenant) {
-          setCurrentTenant(formattedTenants[0])
+        if (formattedTenants.length > 0) {
+          const selected = pickCurrentTenant(formattedTenants)
+          setCurrentTenant(selected)
+          if (selected) setCurrentTenantId(String(selected.id))
+        } else {
+          // If no tenants exist yet, create a default one
+          await createDefaultTenant()
         }
-      }
-
-      // If no tenants, create a default one
-      if (!tenantsData || tenantsData.length === 0) {
-        await createDefaultTenant()
       }
     } catch (error) {
       console.error("Error loading user data:", error)
@@ -93,13 +81,12 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
 
   const createDefaultTenant = async () => {
     try {
-      const { data, error } = await supabase.rpc("create_default_tenant_for_user", {
-        user_id: user.id,
-        user_email: user.email,
+      const res = await apiFetch("/api/v1/tenants/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Default Tenant" }),
       })
-
-      if (!error && data) {
-        // Reload tenants
+      if (res.ok) {
         loadUserData()
       }
     } catch (error) {
@@ -113,27 +100,23 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "")
 
-    const { data: tenant, error: tenantError } = await supabase
-      .from("tenants")
-      .insert({ name, slug })
-      .select("id, name, slug")
-      .single()
-
-    if (tenantError) throw tenantError
-
-    const { error: roleError } = await supabase
-      .from("user_tenant_roles")
-      .insert({ user_id: user.id, tenant_id: tenant.id, role: "owner" })
-
-    if (roleError) throw roleError
-
-    const newTenant = { ...tenant, role: "owner" }
+    const res = await apiFetch("/api/v1/tenants/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, slug }),
+    })
+    if (!res.ok) throw new Error("Failed to create tenant")
+    const tenant = await res.json()
+    const newTenant = { id: String(tenant.id), name: tenant.name, slug: tenant.slug, role: "owner" }
     setTenants((prev) => [...prev, newTenant])
     setCurrentTenant(newTenant)
+    setCurrentTenantId(String(newTenant.id))
   }
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut()
+    // Clear token on client and redirect
+    // Depending on your auth flow, you might also hit a backend logout endpoint.
+    setCurrentTenantId(null)
     router.push("/")
   }
 
@@ -156,13 +139,15 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
       icon: FileText,
       current: pathname.startsWith("/dashboard/schema"), // Keep schema check for both /schema/new and /schemas routes
     },
+    { name: "Seeds", href: "/dashboard/seeds", icon: FileText, current: pathname.startsWith("/dashboard/seeds") },
     { name: "Job Console", href: "/dashboard/jobs", icon: Play, current: pathname.startsWith("/dashboard/jobs") },
     { name: "Exports", href: "/dashboard/exports", icon: Download, current: pathname.startsWith("/dashboard/exports") },
   ]
 
   return (
-    <div className="flex min-h-screen bg-gray-50">
-      {/* Sidebar */}
+    <TenantProvider value={{ tenant: currentTenant, setTenant: (t) => { setCurrentTenant(t as any); if (t) setCurrentTenantId(String(t.id)); } }}>
+      <div className="flex min-h-screen bg-gray-50">
+        {/* Sidebar */}
       <div className="w-64 bg-white border-r border-gray-200">
         <div className="p-6">
           <h1 className="text-xl font-bold text-gray-900">Client Synth</h1>
@@ -172,7 +157,10 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
           <TenantSwitcher
             tenants={tenants}
             currentTenant={currentTenant}
-            onTenantChange={setCurrentTenant}
+            onTenantChange={(t) => {
+              setCurrentTenant(t)
+              setCurrentTenantId(String(t.id))
+            }}
             onCreateTenant={handleCreateTenant}
           />
         </div>
@@ -197,8 +185,8 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
         </nav>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col">
+        {/* Main Content */}
+        <div className="flex-1 flex flex-col">
         {/* Header */}
         <header className="bg-white border-b border-gray-200 px-6 py-4">
           <div className="flex items-center justify-between">
@@ -251,7 +239,8 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
 
         {/* Page Content */}
         <main className="flex-1 p-6">{children}</main>
+        </div>
       </div>
-    </div>
+    </TenantProvider>
   )
 }

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.api.v1.auth import get_current_user
 from app.models.identity import User, UserTenantRole
-from app.models.jobs import Job, GeneratedData
+from app.models.jobs import Job, GeneratedData, JobLog
 from app.models.schema import Schema
 from app.services.job_processor import JobProcessor
 
@@ -54,13 +54,33 @@ def process_one(user: User = Depends(get_current_user), db: Session = Depends(ge
     return {"processed": processed}
 
 
+@router.post("/process_all", response_model=dict)
+def process_all(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Process until the queue is empty
+    processor = JobProcessor(db)
+    count = 0
+    while processor.process_next():
+        count += 1
+    return {"processed": count}
+
+
 @router.get("/{job_id}", response_model=dict)
 def get_job(job_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     job = db.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Not found")
     _assert_tenant_access(db, user.id, job.tenant_id)
-    return {"id": job.id, "status": job.status, "progress": job.progress, "generated_records": job.generated_records}
+    return {
+        "id": job.id,
+        "tenant_id": job.tenant_id,
+        "schema_id": job.schema_id,
+        "name": job.name,
+        "status": job.status,
+        "progress": job.progress,
+        "total_records": job.total_records,
+        "generated_records": job.generated_records,
+        "error_message": job.error_message,
+    }
 
 
 @router.get("/{job_id}/data", response_model=List[dict])
@@ -71,5 +91,29 @@ def list_generated(job_id: str, user: User = Depends(get_current_user), db: Sess
     _assert_tenant_access(db, user.id, job.tenant_id)
     rows = db.query(GeneratedData).filter(GeneratedData.job_id == job_id).order_by(GeneratedData.record_index.asc()).all()
     return [r.record_data for r in rows]
+
+
+@router.get("/{job_id}/logs", response_model=List[dict])
+def list_job_logs(job_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    job = db.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Not found")
+    _assert_tenant_access(db, user.id, job.tenant_id)
+    rows = (
+        db.query(JobLog)
+        .filter(JobLog.job_id == job_id)
+        .order_by(JobLog.created_at.asc())
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "level": r.level,
+            "message": r.message,
+            "meta": r.meta or {},
+            "created_at": r.created_at.isoformat() if getattr(r, "created_at", None) else None,
+        }
+        for r in rows
+    ]
 
 

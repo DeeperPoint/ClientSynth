@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClient } from "@/lib/supabase/client"
+import { apiFetch } from "@/lib/backend-client"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -31,7 +31,7 @@ interface Export {
 export default function ExportsPage() {
   const [exports, setExports] = useState<Export[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const supabase = createClient()
+  // TODO: Replace this page's data with backend endpoints when available
 
   useEffect(() => {
     loadExports()
@@ -39,25 +39,14 @@ export default function ExportsPage() {
 
   const loadExports = async () => {
     try {
-      const { data, error } = await supabase
-        .from("exports")
-        .select(`
-          id,
-          name,
-          format,
-          status,
-          file_url,
-          file_size,
-          record_count,
-          created_at,
-          error_message,
-          jobs(id, name),
-          jobs!inner(schemas(name))
-        `)
-        .order("created_at", { ascending: false })
-
-      if (error) throw error
-      setExports(data || [])
+      // Try a backend endpoint for listing exports; fallback to empty list
+      const res = await apiFetch("/api/v1/exports/recent")
+      if (res.ok) {
+        const items = await res.json()
+        setExports(items || [])
+      } else {
+        setExports([])
+      }
     } catch (error) {
       console.error("Error loading exports:", error)
     } finally {
@@ -80,8 +69,8 @@ export default function ExportsPage() {
     if (!confirm("Are you sure you want to delete this export?")) return
 
     try {
-      const { error } = await supabase.from("exports").delete().eq("id", exportId)
-      if (error) throw error
+      const res = await apiFetch(`/api/v1/exports/${exportId}`, { method: "DELETE" })
+      if (!res.ok) throw new Error("Failed to delete export")
       loadExports()
     } catch (error) {
       console.error("Error deleting export:", error)
