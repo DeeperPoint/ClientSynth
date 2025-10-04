@@ -40,7 +40,8 @@ export default function ExportsPage() {
   const loadExports = async () => {
     try {
       // Try a backend endpoint for listing exports; fallback to empty list
-      const res = await apiFetch("/api/v1/exports/recent")
+  // Provide tenant_id if available later; keeping generic call for now
+  const res = await apiFetch("/api/v1/exports/recent")
       if (res.ok) {
         const items = await res.json()
         setExports(items || [])
