@@ -1,6 +1,7 @@
 import type { BaseImageProvider } from "./providers/base-provider"
 import { FalImageProvider } from "./providers/fal-provider"
 import { PlaceholderImageProvider } from "./providers/placeholder-provider"
+import { GoogleFlashProvider } from "./providers/google-flash-provider"
 import { PromptEnhancer } from "./prompt-enhancer"
 import { S3Uploader } from "../s3-uploader"
 
@@ -13,7 +14,7 @@ export interface ImageGenerationRequest {
   recordData?: Record<string, any>
   fieldDescription?: string
   model?: string
-  provider?: "fal" | "placeholder"
+  provider?: "fal" | "google-flash" | "placeholder"
   style?: "professional" | "casual" | "artistic" | "realistic"
   count?: number
 }
@@ -41,6 +42,18 @@ export class ImageGenerationService {
     // Always add placeholder provider as fallback
     this.providers.set("placeholder", new PlaceholderImageProvider())
 
+    try {
+      if (process.env.GOOGLE_AI_API_KEY) {
+        const googleFlashProvider = new GoogleFlashProvider()
+        if (googleFlashProvider.validateConfig()) {
+          this.providers.set("google-flash", googleFlashProvider)
+          console.log("[ImageService] Google Flash provider initialized")
+        }
+      }
+    } catch (error) {
+      console.warn("[ImageService] Failed to initialize Google Flash provider:", error)
+    }
+
     // Add Fal provider if configured
     try {
       if (process.env.FAL_KEY) {
@@ -66,7 +79,7 @@ export class ImageGenerationService {
       prompt,
       recordData,
       fieldDescription,
-      provider = "fal",
+      provider = "google-flash",
       style = "professional",
       count = 1,
     } = request

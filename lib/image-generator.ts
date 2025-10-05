@@ -25,7 +25,7 @@ export class ImageGenerator {
   }): Promise<ImageGenerationResult> {
     const request: ImageGenerationRequest = {
       ...options,
-      provider: "fal", // Default to fal provider
+      provider: "google-flash",
       style: "professional",
     }
 

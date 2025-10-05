@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
       model,
       recordData,
       fieldDescription,
-      provider = "fal",
+      provider = "google-flash",
       style = "professional",
     } = await request.json()
 
@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 })
     }
 
-    console.log(`[ImageAPI] Generating image for field: ${fieldName}`)
+    console.log(`[ImageAPI] Generating image for field: ${fieldName} using provider: ${provider}`)
 
     const imageService = new ImageGenerationService()
     const result = await imageService.generateAndUploadImage({

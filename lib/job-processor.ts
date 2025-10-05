@@ -328,7 +328,7 @@ export class JobProcessor {
       console.log(`[v0][SERVER][JobProcessor] Processing job ${job.job_id}: ${job.name}`)
 
       const textModel = job.config.text_model || "google/gemini-2.5-flash"
-      const imageModel = job.config.image_model || "black-forest-labs/flux-1.1-pro"
+      const imageModel = job.config.image_model || "gemini-2.0-flash-exp"
 
       console.log("[v0] Setting AI models:", { textModel, imageModel })
       this.aiGenerator.setModel(textModel)
@@ -606,7 +606,7 @@ export class JobProcessor {
   ): Promise<string> {
     try {
       const imagesPerRecord = job.config.images_per_record || 1
-      const imageModel = job.config.image_model || "black-forest-labs/flux-1.1-pro"
+      const imageModel = job.config.image_model || "gemini-2.0-flash-exp"
 
       const contextPrompt = this.buildImagePrompt(field, recordData)
 
