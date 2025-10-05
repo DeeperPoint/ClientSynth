@@ -1,5 +1,4 @@
-import { createServerClient } from "@supabase/ssr"
-import { cookies } from "next/headers"
+// import { createServerClient } from "@supabase/ssr" // disabled in local backend mode
 
 export interface GoogleDriveToken {
   id: string
@@ -15,19 +14,14 @@ export interface GoogleDriveToken {
 }
 
 export class GoogleDriveAuthHandler {
-  private supabase
+  // Supabase disabled in local backend mode
+  // private supabase
   private clientId: string
   private clientSecret: string
   private redirectUri: string
 
   constructor() {
-    this.supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      cookies: {
-        get: (name: string) => cookies().get(name)?.value,
-        set: () => {},
-        remove: () => {},
-      },
-    })
+    // Supabase disabled in local backend mode
 
     this.clientId = process.env.GOOGLE_DRIVE_CLIENT_ID!
     this.clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET!
@@ -84,36 +78,21 @@ export class GoogleDriveAuthHandler {
       const tokenData = await tokenResponse.json()
       console.log("[v0] Token exchange successful")
 
-      // Store tokens in database
+      // In local backend mode we don't persist tokens in Supabase; return a minimal shape
       const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
-
-      const { data, error } = await this.supabase
-        .from("google_drive_tokens")
-        .upsert(
-          {
-            user_id: userId,
-            tenant_id: tenantId,
-            access_token: tokenData.access_token,
-            refresh_token: tokenData.refresh_token,
-            token_type: tokenData.token_type || "Bearer",
-            expires_at: expiresAt,
-            scope: tokenData.scope,
-            updated_at: new Date().toISOString(),
-          },
-          {
-            onConflict: "user_id,tenant_id",
-          },
-        )
-        .select()
-        .single()
-
-      if (error) {
-        console.error("[v0] Error storing tokens:", error)
-        throw error
+      console.log("[v0] Tokens acquired (not persisted in local mode)")
+      return {
+        id: "",
+        user_id: userId,
+        tenant_id: tenantId,
+        access_token: tokenData.access_token,
+        refresh_token: tokenData.refresh_token,
+        token_type: tokenData.token_type || "Bearer",
+        expires_at: expiresAt,
+        scope: tokenData.scope,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       }
-
-      console.log("[v0] Tokens stored successfully")
-      return data
     } catch (error) {
       console.error("[v0] Failed to exchange code for tokens:", error)
       throw error
@@ -123,41 +102,8 @@ export class GoogleDriveAuthHandler {
   async getValidToken(tenantId: string, userId: string): Promise<string | null> {
     console.log("[v0] Getting valid access token for tenant:", tenantId)
 
-    try {
-      const { data: tokenData, error } = await this.supabase
-        .from("google_drive_tokens")
-        .select("*")
-        .eq("user_id", userId)
-        .eq("tenant_id", tenantId)
-        .single()
-
-      if (error || !tokenData) {
-        console.log("[v0] No tokens found for user")
-        return null
-      }
-
-      // Check if token is still valid
-      const expiresAt = new Date(tokenData.expires_at)
-      const now = new Date()
-      const bufferTime = 5 * 60 * 1000 // 5 minutes buffer
-
-      if (expiresAt.getTime() - now.getTime() > bufferTime) {
-        console.log("[v0] Access token is still valid")
-        return tokenData.access_token
-      }
-
-      // Token is expired or about to expire, refresh it
-      if (tokenData.refresh_token) {
-        console.log("[v0] Access token expired, refreshing")
-        return await this.refreshToken(tokenData)
-      }
-
-      console.log("[v0] No refresh token available, re-authorization required")
-      return null
-    } catch (error) {
-      console.error("[v0] Error getting valid token:", error)
-      return null
-    }
+    // Supabase disabled: cannot retrieve persisted tokens, return null to signal re-auth needed
+    return null
   }
 
   private async refreshToken(tokenData: GoogleDriveToken): Promise<string | null> {
@@ -189,21 +135,8 @@ export class GoogleDriveAuthHandler {
       // Update stored tokens
       const expiresAt = new Date(Date.now() + refreshData.expires_in * 1000).toISOString()
 
-      const { error: updateError } = await this.supabase
-        .from("google_drive_tokens")
-        .update({
-          access_token: refreshData.access_token,
-          expires_at: expiresAt,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", tokenData.id)
-
-      if (updateError) {
-        console.error("[v0] Error updating refreshed tokens:", updateError)
-        return null
-      }
-
-      console.log("[v0] Refreshed tokens stored successfully")
+      // Supabase disabled: skip persistence
+      console.log("[v0] Refreshed tokens (not persisted in local mode)")
       return refreshData.access_token
     } catch (error) {
       console.error("[v0] Failed to refresh token:", error)
@@ -214,38 +147,8 @@ export class GoogleDriveAuthHandler {
   async revokeTokens(tenantId: string, userId: string): Promise<void> {
     console.log("[v0] Revoking Google Drive tokens for tenant:", tenantId)
 
-    try {
-      const { data: tokenData } = await this.supabase
-        .from("google_drive_tokens")
-        .select("access_token")
-        .eq("user_id", userId)
-        .eq("tenant_id", tenantId)
-        .single()
-
-      if (tokenData?.access_token) {
-        // Revoke token with Google
-        await fetch(`https://oauth2.googleapis.com/revoke?token=${tokenData.access_token}`, {
-          method: "POST",
-        })
-      }
-
-      // Delete from database
-      const { error } = await this.supabase
-        .from("google_drive_tokens")
-        .delete()
-        .eq("user_id", userId)
-        .eq("tenant_id", tenantId)
-
-      if (error) {
-        console.error("[v0] Error deleting tokens:", error)
-        throw error
-      }
-
-      console.log("[v0] Tokens revoked successfully")
-    } catch (error) {
-      console.error("[v0] Failed to revoke tokens:", error)
-      throw error
-    }
+    // Supabase disabled: nothing to revoke/persist; no-op in local mode
+    console.log("[v0] Revoke tokens (no-op in local mode)")
   }
 
   async isAuthorized(tenantId: string, userId: string): Promise<boolean> {

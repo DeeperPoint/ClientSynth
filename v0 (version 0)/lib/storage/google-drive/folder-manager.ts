@@ -1,6 +1,7 @@
 import { GoogleDriveAuthHandler } from "./auth-handler"
-import { createServerClient } from "@supabase/ssr"
-import { cookies } from "next/headers"
+// import { createServerClient } from "@supabase/ssr" // disabled in local backend mode
+
+// Supabase disabled in local backend mode
 
 export interface DriveFolder {
   id: string
@@ -16,17 +17,11 @@ export interface DriveFolder {
 
 export class GoogleDriveFolderManager {
   private authHandler: GoogleDriveAuthHandler
-  private supabase
+  // Supabase disabled in local backend mode
+  // private supabase: any = null
 
   constructor() {
     this.authHandler = new GoogleDriveAuthHandler()
-    this.supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      cookies: {
-        get: (name: string) => cookies().get(name)?.value,
-        set: () => {},
-        remove: () => {},
-      },
-    })
   }
 
   async createProjectStructure(
@@ -128,34 +123,7 @@ export class GoogleDriveFolderManager {
     const driveFolder = await response.json()
     console.log("[v0] Google Drive folder created:", driveFolder.id)
 
-    // Store folder info in database if tenantId provided
-    if (tenantId) {
-      const { data, error } = await this.supabase
-        .from("drive_folders")
-        .insert({
-          tenant_id: tenantId,
-          drive_folder_id: driveFolder.id,
-          folder_name: folderName,
-          parent_folder_id: parentFolderId,
-          folder_type: folderType,
-          metadata: {
-            drive_name: driveFolder.name,
-            created_time: driveFolder.createdTime,
-          },
-        })
-        .select()
-        .single()
-
-      if (error) {
-        console.error("[v0] Error storing folder info:", error)
-        throw error
-      }
-
-      console.log("[v0] Folder info stored in database")
-      return data
-    }
-
-    // Return minimal folder info if no database storage
+    // In local backend mode return minimal folder info (no Supabase persistence)
     return {
       id: "",
       tenant_id: tenantId || "",
@@ -172,20 +140,9 @@ export class GoogleDriveFolderManager {
   async getFoldersByType(tenantId: string, folderType: DriveFolder["folder_type"]): Promise<DriveFolder[]> {
     console.log("[v0] Getting folders by type:", folderType, "for tenant:", tenantId)
 
-    const { data, error } = await this.supabase
-      .from("drive_folders")
-      .select("*")
-      .eq("tenant_id", tenantId)
-      .eq("folder_type", folderType)
-      .order("created_at", { ascending: false })
-
-    if (error) {
-      console.error("[v0] Error fetching folders:", error)
-      throw error
-    }
-
-    console.log("[v0] Found folders:", data?.length || 0)
-    return data || []
+    // Supabase disabled: return empty list in local backend mode
+    console.log("[v0] Supabase disabled, returning empty folders list")
+    return []
   }
 
   async getProjectFolders(tenantId: string): Promise<{
@@ -196,32 +153,14 @@ export class GoogleDriveFolderManager {
   }> {
     console.log("[v0] Getting all project folders for tenant:", tenantId)
 
-    const { data, error } = await this.supabase
-      .from("drive_folders")
-      .select("*")
-      .eq("tenant_id", tenantId)
-      .order("folder_type")
-      .order("created_at", { ascending: false })
-
-    if (error) {
-      console.error("[v0] Error fetching project folders:", error)
-      throw error
-    }
-
-    const folders = data || []
+    // Supabase disabled: return empty groups in local backend mode
     const grouped = {
-      projects: folders.filter((f) => f.folder_type === "project"),
-      images: folders.filter((f) => f.folder_type === "images"),
-      datasets: folders.filter((f) => f.folder_type === "datasets"),
-      reports: folders.filter((f) => f.folder_type === "reports"),
+      projects: [] as DriveFolder[],
+      images: [] as DriveFolder[],
+      datasets: [] as DriveFolder[],
+      reports: [] as DriveFolder[],
     }
-
-    console.log(
-      "[v0] Project folders grouped:",
-      Object.entries(grouped)
-        .map(([type, items]) => `${type}: ${items.length}`)
-        .join(", "),
-    )
+    console.log("[v0] Supabase disabled, returning empty grouped folders")
     return grouped
   }
 
@@ -234,21 +173,8 @@ export class GoogleDriveFolderManager {
     }
 
     try {
-      // Get folder info from database
-      const { data: folderData, error: fetchError } = await this.supabase
-        .from("drive_folders")
-        .select("drive_folder_id")
-        .eq("id", folderId)
-        .eq("tenant_id", tenantId)
-        .single()
-
-      if (fetchError || !folderData) {
-        console.error("[v0] Folder not found in database:", fetchError)
-        throw new Error("Folder not found")
-      }
-
-      // Delete from Google Drive
-      const response = await fetch(`https://www.googleapis.com/drive/v3/files/${folderData.drive_folder_id}`, {
+      // In local backend mode we don't have DB mapping; best effort: assume folderId is Drive ID
+      const response = await fetch(`https://www.googleapis.com/drive/v3/files/${folderId}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -261,19 +187,7 @@ export class GoogleDriveFolderManager {
         throw new Error(`Failed to delete folder: ${error}`)
       }
 
-      // Delete from database
-      const { error: deleteError } = await this.supabase
-        .from("drive_folders")
-        .delete()
-        .eq("id", folderId)
-        .eq("tenant_id", tenantId)
-
-      if (deleteError) {
-        console.error("[v0] Error deleting folder from database:", deleteError)
-        throw deleteError
-      }
-
-      console.log("[v0] Folder deleted successfully")
+      console.log("[v0] Folder deleted from Drive (DB cleanup skipped in local backend mode)")
     } catch (error) {
       console.error("[v0] Failed to delete folder:", error)
       throw error

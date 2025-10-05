@@ -17,6 +17,18 @@ class SchemaCreate(BaseModel):
     name: str
     description: str | None = None
     schema_definition: Dict[str, Any] = Field(default_factory=dict)
+    # Optional: explicit per-field seed binding or filter instructions.
+    # Example:
+    # {
+    #   "fields": [...],
+    #   "seed_rules": [
+    #       {"field": "certificate_image", "match": {"category": "certificate"}},
+    #       {"field": "farm_photo", "match": {"category": "farm"}}
+    #   ]
+    # }
+    # Each rule's match dict is AND'ed across provided keys (name, category, filename regex fragment)
+    # and used to narrow the seed pool for that image field.
+    
 
 
 class SchemaResponse(BaseModel):

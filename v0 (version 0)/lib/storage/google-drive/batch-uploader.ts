@@ -1,6 +1,6 @@
 import { GoogleDriveAuthHandler } from "./auth-handler"
 import { GoogleDriveFolderManager } from "./folder-manager"
-import { createServerClient } from "@supabase/ssr"
+// import { createServerClient } from "@supabase/ssr" // disabled in local backend mode
 import { cookies } from "next/headers"
 
 export interface UploadJob {
@@ -35,19 +35,13 @@ export interface UploadResult {
 export class GoogleDriveBatchUploader {
   private authHandler: GoogleDriveAuthHandler
   private folderManager: GoogleDriveFolderManager
-  private supabase
+  private supabase: any
   private activeUploads: Map<string, UploadJob> = new Map()
 
   constructor() {
     this.authHandler = new GoogleDriveAuthHandler()
     this.folderManager = new GoogleDriveFolderManager()
-    this.supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      cookies: {
-        get: (name: string) => cookies().get(name)?.value,
-        set: () => {},
-        remove: () => {},
-      },
-    })
+    this.supabase = { from: () => ({ insert: async () => ({ data: null, error: null }), update: async () => ({ data: null, error: null }), select: async () => ({ data: null, error: null }) }) }
   }
 
   async startBatchUpload(

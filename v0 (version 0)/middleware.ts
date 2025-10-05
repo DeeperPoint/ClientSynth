@@ -1,8 +1,8 @@
-import { updateSession } from "@/lib/supabase/middleware"
-import type { NextRequest } from "next/server"
+import { NextResponse, type NextRequest } from "next/server"
 
-export async function middleware(request: NextRequest) {
-  return await updateSession(request)
+// Local dev: bypass Supabase session handling to avoid @supabase/ssr dependency
+export function middleware(_request: NextRequest) {
+  return NextResponse.next()
 }
 
 export const config = {

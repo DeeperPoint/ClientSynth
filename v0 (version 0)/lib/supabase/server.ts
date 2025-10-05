@@ -1,28 +1,36 @@
-import { createServerClient } from "@supabase/ssr"
-import { cookies } from "next/headers"
+// Stub server client: we don't use Supabase SSR in local dev.
+type QueryResult<T = any> = { data: T | null; error: null; count?: number }
 
-/**
- * Especially important if using Fluid compute: Don't put this client in a
- * global variable. Always create a new client within each function when using
- * it.
- */
-export async function createClient() {
-  const cookieStore = await cookies()
-
-  return createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
-    cookies: {
-      getAll() {
-        return cookieStore.getAll()
-      },
-      setAll(cookiesToSet) {
-        try {
-          cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options))
-        } catch {
-          // The "setAll" method was called from a Server Component.
-          // This can be ignored if you have middleware refreshing
-          // user sessions.
-        }
-      },
+function makeThenableResult<T>(result: QueryResult<T[]>) {
+  const thenable: any = {
+    eq: () => thenable,
+    gte: () => thenable,
+    lte: () => thenable,
+    gt: () => thenable,
+    lt: () => thenable,
+    in: () => thenable,
+    order: () => thenable,
+    limit: () => thenable,
+    select: () => thenable,
+    single: () => Promise.resolve({ data: null, error: null } as QueryResult<any>),
+    insert: () => Promise.resolve({ data: null, error: null } as QueryResult<any>),
+    update: () => Promise.resolve({ data: null, error: null } as QueryResult<any>),
+    delete: () => Promise.resolve({ data: null, error: null } as QueryResult<any>),
+    then: (resolve: any) => resolve(result),
+    catch: () => thenable,
+    finally: (cb: any) => {
+      cb?.()
+      return thenable
     },
-  })
+  }
+  return thenable
+}
+
+export async function createClient() {
+  return {
+    auth: {
+      getUser: async () => ({ data: { user: null }, error: null }),
+    },
+    from: (_table: string) => makeThenableResult<any>({ data: [], error: null, count: 0 }),
+  }
 }

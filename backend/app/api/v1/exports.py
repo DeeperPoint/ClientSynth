@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List
 from sqlalchemy.orm import Session
@@ -71,5 +72,84 @@ def create_export(payload: ExportCreate, user: User = Depends(get_current_user),
     db.commit()
 
     return {"id": exp.id, "status": exp.status, "path": path}
+
+
+@router.get("/{export_id}", response_model=dict)
+def get_export(export_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    exp = db.get(Export, export_id)
+    if not exp:
+        raise HTTPException(status_code=404, detail="Not found")
+    _assert_tenant_access(db, user.id, exp.tenant_id)
+    return {
+        "id": exp.id,
+        "job_id": exp.job_id,
+        "tenant_id": exp.tenant_id,
+        "name": exp.name,
+        "format": exp.format,
+        "status": exp.status,
+        "file_path": exp.file_path,
+        "file_size": exp.file_size,
+        "filters": exp.filters,
+        "created_at": getattr(exp, "created_at", None),
+    }
+
+
+@router.get("/recent", response_model=List[dict])
+def recent_exports(tenant_id: str, limit: int = 10, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _assert_tenant_access(db, user.id, tenant_id)
+    q = db.query(Export).filter(Export.tenant_id == tenant_id).order_by(Export.created_at.desc()).limit(max(1, min(limit, 50)))
+    results = []
+    for e in q.all():
+        results.append({
+            "id": e.id,
+            "name": e.name,
+            "format": e.format,
+            "status": e.status,
+            "file_size": e.file_size,
+            "created_at": getattr(e, "created_at", None),
+        })
+    return results
+
+
+@router.get("/{export_id}/download")
+def download_export(export_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    exp = db.get(Export, export_id)
+    if not exp:
+        raise HTTPException(status_code=404, detail="Not found")
+    _assert_tenant_access(db, user.id, exp.tenant_id)
+    if exp.status != "completed" or not exp.file_path:
+        raise HTTPException(status_code=400, detail="Export not ready")
+    import os
+    if not os.path.exists(exp.file_path):
+        raise HTTPException(status_code=404, detail="File missing")
+    def iterfile():
+        with open(exp.file_path, "rb") as f:
+            while True:
+                chunk = f.read(8192)
+                if not chunk:
+                    break
+                yield chunk
+    media_type = "text/csv" if exp.format == "csv" else "application/json"
+    filename = f"{exp.name}.{exp.format}"
+    return StreamingResponse(iterfile(), media_type=media_type, headers={
+        "Content-Disposition": f"attachment; filename={filename}"
+    })
+
+
+@router.delete("/{export_id}", response_model=dict)
+def delete_export(export_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    exp = db.get(Export, export_id)
+    if not exp:
+        raise HTTPException(status_code=404, detail="Not found")
+    _assert_tenant_access(db, user.id, exp.tenant_id)
+    import os
+    if exp.file_path and os.path.exists(exp.file_path):
+        try:
+            os.remove(exp.file_path)
+        except OSError:
+            pass
+    db.delete(exp)
+    db.commit()
+    return {"deleted": True, "id": export_id}
 
 

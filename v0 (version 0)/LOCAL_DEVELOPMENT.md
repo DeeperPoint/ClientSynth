@@ -107,6 +107,9 @@ pnpm db:functions
 Create a `.env.local` file with the following variables:
 
 ```bash
+# Frontend -> Backend API
+NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
+
 # Database Configuration
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/clientsynth
 DB_HOST=localhost

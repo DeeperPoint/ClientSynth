@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClient } from "@/lib/supabase/client"
+import { apiFetch } from "@/lib/backend-client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -46,7 +46,7 @@ export default function GenerateDataPage() {
 
   const params = useParams()
   const router = useRouter()
-  const supabase = createClient()
+  // Backend client provides auth via Authorization header
 
   useEffect(() => {
     loadSchema()
@@ -55,7 +55,8 @@ export default function GenerateDataPage() {
 
   const loadAvailableModels = async () => {
     try {
-      const response = await fetch("/api/models/available")
+  // In backend-only integration, we could fetch available models from backend if exposed
+  const response = await fetch("/api/models/available")
       if (response.ok) {
         const models = await response.json()
         setAvailableModels(models)
@@ -88,19 +89,9 @@ export default function GenerateDataPage() {
 
   const loadSchema = async () => {
     try {
-      const { data, error } = await supabase.from("schemas").select("*").eq("id", params.id)
-
-      if (error) throw error
-
-      if (!data || data.length === 0) {
-        throw new Error("Schema not found")
-      }
-
-      if (data.length > 1) {
-        throw new Error("Multiple schemas found with the same ID")
-      }
-
-      const schema = data[0]
+      const res = await apiFetch(`/api/v1/schemas/${params.id}`)
+      if (!res.ok) throw new Error(`Failed to load schema (${res.status})`)
+      const schema = await res.json()
       setSchema(schema)
       setJobName(`Generate ${schema.name} Data`)
     } catch (error) {
@@ -116,34 +107,20 @@ export default function GenerateDataPage() {
 
     setIsGenerating(true)
     try {
-      const response = await fetch("/api/jobs/create", {
+      // Create job in backend; requires tenant_id. For now, assume schema contains tenant_id
+      const res = await apiFetch(`/api/v1/jobs/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          tenant_id: (schema as any).tenant_id,
           schema_id: schema.id,
           name: jobName.trim(),
           total_records: Number.parseInt(totalRecords),
-          config: {
-            text_model: textModel,
-            image_model: imageModel,
-            output_format: outputFormat,
-            enable_images: enableImages,
-            images_per_record: Number.parseInt(imagesPerRecord),
-            generation_settings: {
-              temperature: 0.7,
-              max_tokens: 150,
-            },
-          },
         }),
       })
-
-      const result = await response.json()
-
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to create job")
-      }
-
-      router.push(`/dashboard/jobs/${result.job.id}`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || data.error || "Failed to create job")
+      router.push(`/dashboard/jobs/${data.id}`)
     } catch (error) {
       console.error("Error starting generation:", error)
       alert("Failed to start data generation. Please try again.")
@@ -306,7 +283,11 @@ export default function GenerateDataPage() {
                 </div>
 
                 <div className="flex items-center space-x-2">
-                  <Checkbox id="enable-images" checked={enableImages} onCheckedChange={setEnableImages} />
+                  <Checkbox
+                    id="enable-images"
+                    checked={enableImages}
+                    onCheckedChange={(v) => setEnableImages(v === true)}
+                  />
                   <Label htmlFor="enable-images">Generate AI images for profile photos</Label>
                 </div>
 

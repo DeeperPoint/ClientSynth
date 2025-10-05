@@ -8,6 +8,7 @@ from app.models.identity import User, UserTenantRole
 from app.models.seeds import Seed, SeedImage
 from app.services.image_provider import LocalSeedImageProvider
 from app.services.storage import LocalStorage
+from app.services.batch_image_generator import BatchImageGenerator
 
 
 router = APIRouter(prefix="/api/v1/images", tags=["images"])
@@ -48,5 +49,33 @@ def generate(req: GenerateRequest, user: User = Depends(get_current_user), db: S
     path, url = storage.save_generated(req.tenant_id, req.job_id, req.record_id, req.field_name, result.content)
 
     return {"url": url, "content_type": result.content_type, "w": result.width, "h": result.height}
+
+
+class BatchGenerateRequest(BaseModel):
+    tenant_id: str
+    seed_id: str
+    total_outputs: int
+    repeat_per_image: int = 1
+    prompt: str = ""
+    style: str = "professional"
+    job_id: str | None = None
+
+
+@router.post("/batch_generate", response_model=list[dict])
+def batch_generate(req: BatchGenerateRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _assert_tenant_access(db, user.id, req.tenant_id)
+    gen = BatchImageGenerator(db)
+    results = gen.generate(
+        tenant_id=req.tenant_id,
+        seed_id=req.seed_id,
+        total_outputs=req.total_outputs,
+        repeat_per_image=max(1, int(req.repeat_per_image)),
+        prompt=req.prompt,
+        style=req.style,
+        job_id=req.job_id,
+        record_prefix="batch",
+        field_name="image",
+    )
+    return results
 
 

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClient } from "@/lib/supabase/client"
+import { apiFetch } from "@/lib/backend-client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -27,7 +27,6 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats>({ schemas: 0, jobs: 0, completedJobs: 0, exports: 0 })
   const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const supabase = createClient()
 
   useEffect(() => {
     loadDashboardData()
@@ -35,68 +34,90 @@ export default function DashboardPage() {
 
   const loadDashboardData = async () => {
     try {
-      // Get current user and tenant
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-      if (!user) return
+      // Load core stats from backend endpoints
+      // Schemas
+      const schemasRes = await apiFetch("/api/v1/schemas/")
+      const schemas = schemasRes.ok ? await schemasRes.json() : []
 
-      // Load stats
-      const [schemasResult, jobsResult, exportsResult] = await Promise.all([
-        supabase.from("schemas").select("id", { count: "exact" }),
-        supabase.from("jobs").select("id, status", { count: "exact" }),
-        supabase.from("exports").select("id", { count: "exact" }),
-      ])
+      // Jobs: Derive counts + completed
+      // If a list endpoint doesn't exist, we can synthesize from recent jobs on the server later.
+      // For now, try fetching a few latest job IDs if available via a future endpoint; fallback to 0s.
+      let jobsCount = 0
+      let completedJobs = 0
+      try {
+        const jobsLatest = await apiFetch("/api/v1/jobs/recent")
+        if (jobsLatest.ok) {
+          const jobs = await jobsLatest.json()
+          jobsCount = jobs.length
+          completedJobs = jobs.filter((j: any) => j.status === "completed").length
+        }
+      } catch {
+        // ignore
+      }
 
-      const completedJobs = jobsResult.data?.filter((job) => job.status === "completed").length || 0
+      // Exports: best-effort until export list exists
+      let exportsCount = 0
+      try {
+        const expRes = await apiFetch("/api/v1/exports/recent")
+        if (expRes.ok) {
+          const exps = await expRes.json()
+          exportsCount = exps.length
+        }
+      } catch {
+        // ignore
+      }
 
       setStats({
-        schemas: schemasResult.count || 0,
-        jobs: jobsResult.count || 0,
+        schemas: Array.isArray(schemas) ? schemas.length : 0,
+        jobs: jobsCount,
         completedJobs,
-        exports: exportsResult.count || 0,
+        exports: exportsCount,
       })
 
-      // Load recent activity
-      const { data: recentSchemas } = await supabase
-        .from("schemas")
-        .select("id, name, created_at")
-        .order("created_at", { ascending: false })
-        .limit(3)
+      // Recent activity (best-effort from available endpoints)
+      const activities: RecentActivity[] = []
+      if (Array.isArray(schemas)) {
+        schemas.slice(0, 3).forEach((s: any) =>
+          activities.push({
+            id: String(s.id),
+            type: "schema",
+            title: `Schema "${s.name ?? s.title ?? "Untitled"}" created`,
+            created_at: s.created_at ?? new Date().toISOString(),
+          }),
+        )
+      }
+      // If recent jobs were available
+      try {
+        const jobsLatest = await apiFetch("/api/v1/jobs/recent")
+        if (jobsLatest.ok) {
+          const jobs = await jobsLatest.json()
+          jobs.slice(0, 3).forEach((j: any) =>
+            activities.push({
+              id: String(j.id),
+              type: "job",
+              title: `Generation job for "${j.schema_name ?? j.name ?? "schema"}"`,
+              status: j.status,
+              created_at: j.created_at ?? new Date().toISOString(),
+            }),
+          )
+        }
+      } catch {}
 
-      const { data: recentJobs } = await supabase
-        .from("jobs")
-        .select("id, schema_name, status, created_at")
-        .order("created_at", { ascending: false })
-        .limit(3)
-
-      const { data: recentExports } = await supabase
-        .from("exports")
-        .select("id, job_id, format, created_at")
-        .order("created_at", { ascending: false })
-        .limit(2)
-
-      const activities: RecentActivity[] = [
-        ...(recentSchemas?.map((schema) => ({
-          id: schema.id,
-          type: "schema" as const,
-          title: `Schema "${schema.name}" created`,
-          created_at: schema.created_at,
-        })) || []),
-        ...(recentJobs?.map((job) => ({
-          id: job.id,
-          type: "job" as const,
-          title: `Generation job for "${job.schema_name}"`,
-          status: job.status,
-          created_at: job.created_at,
-        })) || []),
-        ...(recentExports?.map((exp) => ({
-          id: exp.id,
-          type: "export" as const,
-          title: `Data exported as ${exp.format.toUpperCase()}`,
-          created_at: exp.created_at,
-        })) || []),
-      ]
+      // If recent exports were available
+      try {
+        const expRes = await apiFetch("/api/v1/exports/recent")
+        if (expRes.ok) {
+          const exps = await expRes.json()
+          exps.slice(0, 2).forEach((e: any) =>
+            activities.push({
+              id: String(e.id),
+              type: "export",
+              title: `Data exported as ${(e.format ?? "").toString().toUpperCase()}`,
+              created_at: e.created_at ?? new Date().toISOString(),
+            }),
+          )
+        }
+      } catch {}
 
       activities.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
       setRecentActivity(activities.slice(0, 5))

@@ -1,8 +1,9 @@
 "use client"
 
 import { useState } from "react"
-import { createClient } from "@/lib/supabase/client"
+import { apiFetch } from "@/lib/backend-client"
 import { Button } from "@/components/ui/button"
+import { getCurrentTenantId, setCurrentTenantId } from "@/lib/tenant-selection"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -18,6 +19,7 @@ interface SchemaField {
   type: string
   description: string
   required: boolean
+  seedCategory?: string // optional category filter for image fields
   constraints?: {
     min?: number
     max?: number
@@ -32,6 +34,7 @@ interface SchemaDefinition {
     version: string
     created_at: string
   }
+  seed_rules?: { field: string; match: Record<string, string> }[]
 }
 
 const FIELD_TYPES = [
@@ -60,7 +63,37 @@ export function SchemaBuilder() {
   const [fields, setFields] = useState<SchemaField[]>([])
   const [isSaving, setIsSaving] = useState(false)
   const router = useRouter()
-  const supabase = createClient()
+
+  async function getDefaultTenantId(): Promise<string | null> {
+    try {
+      // Prefer a tenant the user already selected in the app shell
+      const selected = getCurrentTenantId()
+      if (selected) return selected
+
+      const res = await apiFetch("/api/v1/tenants/")
+      if (res.ok) {
+        const tenants = await res.json()
+        if (Array.isArray(tenants) && tenants.length > 0) {
+          const id = String(tenants[0].id)
+          setCurrentTenantId(id)
+          return id
+        }
+      }
+      // Create a default tenant if none exist
+      const createRes = await apiFetch("/api/v1/tenants/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Default Tenant" }),
+      })
+      if (!createRes.ok) return null
+      const tenant = await createRes.json()
+      const id = String(tenant.id)
+      setCurrentTenantId(id)
+      return id
+    } catch {
+      return null
+    }
+  }
 
   const addField = () => {
     const newField: SchemaField = {
@@ -89,71 +122,8 @@ export function SchemaBuilder() {
 
     setIsSaving(true)
     try {
-      const { data: user } = await supabase.auth.getUser()
-      if (!user.user) throw new Error("Not authenticated")
-
-      let tenantId: string | null = null
-
-      // First try to get current_tenant_id from profile
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("current_tenant_id")
-        .eq("id", user.user.id)
-        .single()
-
-      if (profile?.current_tenant_id) {
-        tenantId = profile.current_tenant_id
-      } else {
-        // If no current tenant, get user's tenants and use the first one
-        const { data: userTenants } = await supabase
-          .from("tenants")
-          .select(`
-            id,
-            name,
-            user_tenant_roles!inner(role)
-          `)
-          .eq("user_tenant_roles.user_id", user.user.id)
-          .limit(1)
-
-        if (userTenants && userTenants.length > 0) {
-          tenantId = userTenants[0].id
-
-          // Update profile with current tenant
-          await supabase.from("profiles").update({ current_tenant_id: tenantId }).eq("id", user.user.id)
-        } else {
-          // Create a default tenant for the user
-          const defaultTenantName = user.user.email?.split("@")[0] + "'s Organization" || "My Organization"
-          const slug = defaultTenantName
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-|-$/g, "")
-
-          // Create tenant
-          const { data: newTenant, error: tenantError } = await supabase
-            .from("tenants")
-            .insert({ name: defaultTenantName, slug })
-            .select("id")
-            .single()
-
-          if (tenantError) throw tenantError
-
-          // Add user as owner
-          const { error: roleError } = await supabase
-            .from("user_tenant_roles")
-            .insert({ user_id: user.user.id, tenant_id: newTenant.id, role: "owner" })
-
-          if (roleError) throw roleError
-
-          tenantId = newTenant.id
-
-          // Update profile with current tenant
-          await supabase.from("profiles").update({ current_tenant_id: tenantId }).eq("id", user.user.id)
-        }
-      }
-
-      if (!tenantId) {
-        throw new Error("Unable to determine or create tenant")
-      }
+      const tenantId = await getDefaultTenantId()
+      if (!tenantId) throw new Error("Unable to determine or create tenant")
 
       const schemaDefinition: SchemaDefinition = {
         fields: fields.map((field) => ({
@@ -164,17 +134,22 @@ export function SchemaBuilder() {
           version: "1.0",
           created_at: new Date().toISOString(),
         },
+        seed_rules: fields
+          .filter((f) => f.type === "image" && f.seedCategory?.trim())
+          .map((f) => ({ field: f.name.trim(), match: { category: f.seedCategory!.trim() } })),
       }
 
-      const { error } = await supabase.from("schemas").insert({
-        name: schemaName.trim(),
-        description: schemaDescription.trim(),
-        schema_definition: schemaDefinition,
-        created_by: user.user.id,
-        tenant_id: tenantId,
+      const res = await apiFetch("/api/v1/schemas/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: schemaName.trim(),
+          description: schemaDescription.trim(),
+          schema_definition: schemaDefinition,
+          tenant_id: tenantId,
+        }),
       })
-
-      if (error) throw error
+      if (!res.ok) throw new Error("Failed to save schema")
 
       router.push("/dashboard/schemas")
     } catch (error) {
@@ -329,6 +304,20 @@ export function SchemaBuilder() {
                             <p className="text-xs text-blue-600 mt-1">
                               AI will use this description to generate more relevant content
                             </p>
+                          )}
+                          {field.type === "image" && (
+                            <div className="mt-2">
+                              <Label htmlFor={`field-seedcat-${field.id}`} className="text-xs text-muted-foreground">
+                                Seed Category (optional, maps to seed_rules)
+                              </Label>
+                              <Input
+                                id={`field-seedcat-${field.id}`}
+                                placeholder="e.g., certificate, farm"
+                                value={field.seedCategory || ""}
+                                onChange={(e) => updateField(field.id, { seedCategory: e.target.value })}
+                                className="mt-1 h-8 text-xs"
+                              />
+                            </div>
                           )}
                         </div>
                       </div>
