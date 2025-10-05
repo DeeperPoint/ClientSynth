@@ -14,6 +14,9 @@ import {
 import { Plus, FileText, Calendar, Users, MoreVertical, Edit, Trash2, Play, Sparkles } from "lucide-react"
 import Link from "next/link"
 import { toast } from "sonner"
+import { UI_CONFIG } from "@/lib/ui-config"
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
+import { ConfirmDialog } from "@/components/confirm-dialog"
 
 interface Schema {
   id: string
@@ -31,6 +34,11 @@ export default function SchemasPage() {
   const [schemas, setSchemas] = useState<Schema[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; schemaId: string; schemaName: string }>({
+    open: false,
+    schemaId: "",
+    schemaName: "",
+  })
   const supabase = createClient()
 
   useEffect(() => {
@@ -63,23 +71,24 @@ export default function SchemasPage() {
   }
 
   const deleteSchema = async (schemaId: string, schemaName: string) => {
-    if (!confirm(`Are you sure you want to delete "${schemaName}"? This action cannot be undone.`)) {
-      return
-    }
+    setDeleteDialog({ open: true, schemaId, schemaName })
+  }
 
-    setDeletingId(schemaId)
+  const confirmDelete = async () => {
+    setDeletingId(deleteDialog.schemaId)
     try {
-      const { error } = await supabase.from("schemas").delete().eq("id", schemaId)
+      const { error } = await supabase.from("schemas").delete().eq("id", deleteDialog.schemaId)
 
       if (error) throw error
 
-      setSchemas(schemas.filter((s) => s.id !== schemaId))
-      toast.success(`Schema "${schemaName}" deleted successfully`)
+      setSchemas(schemas.filter((s) => s.id !== deleteDialog.schemaId))
+      toast.success(`Schema "${deleteDialog.schemaName}" deleted successfully`)
     } catch (error) {
       console.error("Error deleting schema:", error)
       toast.error("Failed to delete schema")
     } finally {
       setDeletingId(null)
+      setDeleteDialog({ open: false, schemaId: "", schemaName: "" })
     }
   }
 
@@ -93,10 +102,10 @@ export default function SchemasPage() {
 
   if (isLoading) {
     return (
-      <div className="max-w-7xl mx-auto p-6">
-        <div className="animate-pulse space-y-6">
+      <div className={`max-w-7xl mx-auto ${UI_CONFIG.spacing.page.full}`}>
+        <div className={`animate-pulse ${UI_CONFIG.spacing.section.medium}`}>
           <div className="h-10 bg-muted rounded-lg w-1/3"></div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className={`grid ${UI_CONFIG.grid.cols.default} ${UI_CONFIG.grid.gap.medium}`}>
             {[1, 2, 3].map((i) => (
               <div key={i} className="h-64 bg-muted rounded-xl"></div>
             ))}
@@ -107,9 +116,9 @@ export default function SchemasPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto p-6">
+    <div className={`max-w-7xl mx-auto ${UI_CONFIG.spacing.page.full}`}>
       <div className="flex items-center justify-between mb-10">
-        <div className="space-y-2">
+        <div className={UI_CONFIG.spacing.section.small}>
           <h1 className="text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
             Schema Studio
           </h1>
@@ -118,7 +127,7 @@ export default function SchemasPage() {
         <Button
           asChild
           size="lg"
-          className="gradient-primary text-white shadow-medium hover:shadow-soft transition-all duration-200"
+          className={`gradient-primary text-white shadow-medium hover:shadow-soft ${UI_CONFIG.animation.transition}`}
         >
           <Link href="/dashboard/schema/new">
             <Plus className="mr-2 h-5 w-5" />
@@ -128,32 +137,38 @@ export default function SchemasPage() {
       </div>
 
       {schemas.length === 0 ? (
-        <div className="text-center py-20">
-          <div className="glass-effect rounded-2xl p-12 max-w-md mx-auto">
-            <FileText className="mx-auto h-16 w-16 text-primary mb-6" />
-            <h3 className="text-2xl font-semibold text-foreground mb-3">No schemas yet</h3>
-            <p className="text-muted-foreground mb-8 text-lg">
-              Get started by creating your first data generation schema
-            </p>
+        <Empty className="glass-effect border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <FileText className="h-12 w-12 text-primary" />
+            </EmptyMedia>
+            <EmptyTitle>No schemas yet</EmptyTitle>
+            <EmptyDescription>
+              Get started by creating your first data generation schema to define the structure of your synthetic data
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
             <Button asChild size="lg" className="gradient-primary text-white shadow-medium">
               <Link href="/dashboard/schema/new">
                 <Plus className="mr-2 h-5 w-5" />
                 Create Your First Schema
               </Link>
             </Button>
-          </div>
-        </div>
+          </EmptyContent>
+        </Empty>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        <div className={`grid ${UI_CONFIG.grid.cols.default} ${UI_CONFIG.grid.gap.large}`}>
           {schemas.map((schema) => (
             <Card
               key={schema.id}
-              className="group hover:shadow-medium transition-all duration-300 border-0 shadow-soft bg-card/50 backdrop-blur-sm"
+              className={`group hover:shadow-medium ${UI_CONFIG.animation.transition} border-0 shadow-soft bg-card/50 backdrop-blur-sm`}
             >
               <CardHeader className="pb-4">
                 <div className="flex items-start justify-between">
-                  <div className="space-y-2 flex-1">
-                    <CardTitle className="text-xl font-semibold text-foreground group-hover:text-primary transition-colors">
+                  <div className={`${UI_CONFIG.spacing.section.small} flex-1`}>
+                    <CardTitle
+                      className={`text-xl font-semibold text-foreground group-hover:text-primary ${UI_CONFIG.animation.transition}`}
+                    >
                       {schema.name}
                     </CardTitle>
                     <CardDescription className="text-muted-foreground line-clamp-2">
@@ -197,8 +212,8 @@ export default function SchemasPage() {
                   </DropdownMenu>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="grid grid-cols-2 gap-4">
+              <CardContent className={UI_CONFIG.spacing.section.medium}>
+                <div className={`grid grid-cols-2 ${UI_CONFIG.spacing.card.gap}`}>
                   <div className="flex items-center space-x-2 text-sm text-muted-foreground">
                     <Users className="h-4 w-4 text-primary" />
                     <span className="font-medium">{getFieldCount(schema.schema_definition)} fields</span>
@@ -210,7 +225,9 @@ export default function SchemasPage() {
                 </div>
 
                 {hasImageFields(schema.schema_definition) && (
-                  <div className="flex items-center space-x-2 px-3 py-2 bg-gradient-to-r from-primary/10 to-accent/10 rounded-lg border border-primary/20">
+                  <div
+                    className={`flex items-center space-x-2 ${UI_CONFIG.spacing.card.padding} bg-gradient-to-r from-primary/10 to-accent/10 ${UI_CONFIG.border.radius.medium} border border-primary/20`}
+                  >
                     <Sparkles className="h-4 w-4 text-primary" />
                     <span className="text-sm font-medium text-primary">AI Image Generation</span>
                   </div>
@@ -220,7 +237,7 @@ export default function SchemasPage() {
                   Created by {schema.profiles?.full_name || "Unknown"}
                 </div>
 
-                <div className="flex gap-3 pt-2">
+                <div className={`flex ${UI_CONFIG.spacing.card.gap} pt-2`}>
                   <Button
                     asChild
                     variant="outline"
@@ -244,6 +261,17 @@ export default function SchemasPage() {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={deleteDialog.open}
+        onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}
+        title="Delete Schema"
+        description={`Are you sure you want to delete "${deleteDialog.schemaName}"? This action cannot be undone and will affect any jobs using this schema.`}
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="destructive"
+        onConfirm={confirmDelete}
+      />
     </div>
   )
 }

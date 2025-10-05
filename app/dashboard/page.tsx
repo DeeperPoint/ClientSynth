@@ -5,8 +5,9 @@ import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { FileText, Play, Download, Plus, Clock, CheckCircle, XCircle, AlertCircle } from "lucide-react"
+import { FileText, Play, Download, Plus, Clock, CheckCircle, XCircle, AlertCircle, Sparkles } from "lucide-react"
 import Link from "next/link"
+import { UI_CONFIG } from "@/lib/ui-config"
 
 interface DashboardStats {
   schemas: number
@@ -139,7 +140,7 @@ export default function DashboardPage() {
         <div className="animate-pulse">
           <div className="h-8 bg-gray-200 rounded w-1/4 mb-2"></div>
           <div className="h-4 bg-gray-200 rounded w-1/2 mb-8"></div>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+          <div className={`grid ${UI_CONFIG.grid.cols.wide} ${UI_CONFIG.grid.gap.medium} mb-8`}>
             {[...Array(4)].map((_, i) => (
               <div key={i} className="h-32 bg-gray-200 rounded-lg"></div>
             ))}
@@ -158,8 +159,31 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      {/* Stats Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+      <Card className="mb-8 border-2 border-primary/20 bg-gradient-to-r from-primary/5 to-accent/5 shadow-medium">
+        <CardContent className="pt-6">
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 bg-gradient-to-br from-primary to-accent rounded-lg flex items-center justify-center flex-shrink-0">
+                <Sparkles className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <h3 className="text-xl font-semibold text-foreground mb-2">Quick Generate Synthetic Clients</h3>
+                <p className="text-muted-foreground">
+                  Generate realistic client data instantly with pre-configured templates. Perfect for testing and demos.
+                </p>
+              </div>
+            </div>
+            <Button asChild size="lg" className="gradient-primary text-white shadow-soft whitespace-nowrap">
+              <Link href="/dashboard/quick-generate">
+                <Sparkles className="mr-2 h-5 w-5" />
+                Quick Generate
+              </Link>
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className={`grid ${UI_CONFIG.grid.cols.wide} ${UI_CONFIG.grid.gap.medium} mb-8`}>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Schemas</CardTitle>
@@ -207,8 +231,7 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <div className={`grid ${UI_CONFIG.grid.cols.default} ${UI_CONFIG.grid.gap.medium} mb-8`}>
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -271,9 +294,12 @@ export default function DashboardPage() {
         </CardHeader>
         <CardContent>
           {recentActivity.length > 0 ? (
-            <div className="space-y-4">
+            <div className={UI_CONFIG.spacing.section.small}>
               {recentActivity.map((activity) => (
-                <div key={`${activity.type}-${activity.id}`} className="flex items-center gap-3 p-3 rounded-lg border">
+                <div
+                  key={`${activity.type}-${activity.id}`}
+                  className={`flex items-center ${UI_CONFIG.spacing.card.gap} ${UI_CONFIG.spacing.card.padding} rounded-lg border`}
+                >
                   {getActivityIcon(activity.type)}
                   <div className="flex-1">
                     <p className="text-sm font-medium">{activity.title}</p>

@@ -8,6 +8,10 @@ import { Button } from "@/components/ui/button"
 import { Download, FileText, Trash2 } from "lucide-react"
 import Link from "next/link"
 import { formatDistanceToNow } from "date-fns"
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
+import { ConfirmDialog } from "@/components/confirm-dialog"
+import { toast } from "sonner"
+import { UI_CONFIG } from "@/lib/ui-config"
 
 interface Export {
   id: string
@@ -31,6 +35,11 @@ interface Export {
 export default function ExportsPage() {
   const [exports, setExports] = useState<Export[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; exportId: string; exportName: string }>({
+    open: false,
+    exportId: "",
+    exportName: "",
+  })
   const supabase = createClient()
 
   useEffect(() => {
@@ -76,16 +85,22 @@ export default function ExportsPage() {
     document.body.removeChild(link)
   }
 
-  const deleteExport = async (exportId: string) => {
-    if (!confirm("Are you sure you want to delete this export?")) return
+  const deleteExport = async (exportId: string, exportName: string) => {
+    setDeleteDialog({ open: true, exportId, exportName })
+  }
 
+  const confirmDelete = async () => {
     try {
-      const { error } = await supabase.from("exports").delete().eq("id", exportId)
+      const { error } = await supabase.from("exports").delete().eq("id", deleteDialog.exportId)
       if (error) throw error
-      loadExports()
+
+      setExports(exports.filter((e) => e.id !== deleteDialog.exportId))
+      toast.success(`Export "${deleteDialog.exportName}" deleted successfully`)
     } catch (error) {
       console.error("Error deleting export:", error)
-      alert("Failed to delete export")
+      toast.error("Failed to delete export")
+    } finally {
+      setDeleteDialog({ open: false, exportId: "", exportName: "" })
     }
   }
 
@@ -98,12 +113,12 @@ export default function ExportsPage() {
 
   if (isLoading) {
     return (
-      <div className="max-w-7xl mx-auto">
+      <div className={`max-w-7xl mx-auto ${UI_CONFIG.spacing.page.full}`}>
         <div className="animate-pulse">
-          <div className="h-8 bg-gray-200 rounded w-1/4 mb-6"></div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="h-8 bg-muted rounded w-1/4 mb-6"></div>
+          <div className={`grid ${UI_CONFIG.grid.cols.default} ${UI_CONFIG.grid.gap.medium}`}>
             {[1, 2, 3].map((i) => (
-              <div key={i} className="h-48 bg-gray-200 rounded-lg"></div>
+              <div key={i} className="h-48 bg-muted rounded-lg"></div>
             ))}
           </div>
         </div>
@@ -112,25 +127,31 @@ export default function ExportsPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto">
+    <div className={`max-w-7xl mx-auto ${UI_CONFIG.spacing.page.full}`}>
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Exports</h1>
-        <p className="text-gray-600">Manage and download your exported data files</p>
+        <h1 className="text-3xl font-bold text-foreground mb-2">Exports</h1>
+        <p className="text-muted-foreground">Manage and download your exported data files</p>
       </div>
 
       {exports.length === 0 ? (
-        <Card>
-          <CardContent className="pt-12 pb-12 text-center">
-            <FileText className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No exports yet</h3>
-            <p className="text-gray-600 mb-6">Create your first export from a completed job</p>
-            <Button asChild>
+        <Empty className="border bg-card">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <FileText className="h-12 w-12" />
+            </EmptyMedia>
+            <EmptyTitle>No exports yet</EmptyTitle>
+            <EmptyDescription>
+              Create your first export from a completed job to download your generated data
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button asChild size="lg">
               <Link href="/dashboard/jobs">View Jobs</Link>
             </Button>
-          </CardContent>
-        </Card>
+          </EmptyContent>
+        </Empty>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className={`grid ${UI_CONFIG.grid.cols.default} ${UI_CONFIG.grid.gap.medium}`}>
           {exports.map((exportRecord) => (
             <Card key={exportRecord.id} className="hover:shadow-md transition-shadow">
               <CardHeader>
@@ -188,7 +209,7 @@ export default function ExportsPage() {
                         Download
                       </Button>
                     )}
-                    <Button variant="ghost" size="sm" onClick={() => deleteExport(exportRecord.id)}>
+                    <Button variant="ghost" size="sm" onClick={() => deleteExport(exportRecord.id, exportRecord.name)}>
                       <Trash2 className="h-3 w-3" />
                     </Button>
                   </div>
@@ -198,6 +219,17 @@ export default function ExportsPage() {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={deleteDialog.open}
+        onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}
+        title="Delete Export"
+        description={`Are you sure you want to delete "${deleteDialog.exportName}"? This action cannot be undone.`}
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="destructive"
+        onConfirm={confirmDelete}
+      />
     </div>
   )
 }

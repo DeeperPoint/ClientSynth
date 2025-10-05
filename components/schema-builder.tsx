@@ -9,8 +9,9 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Plus, Trash2, GripVertical, ImageIcon } from "lucide-react"
+import { Plus, Trash2, GripVertical, ImageIcon, Pointer as Spinner } from "lucide-react"
 import { useRouter } from "next/navigation"
+import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty"
 
 interface SchemaField {
   id: string
@@ -202,7 +203,10 @@ export function SchemaBuilder() {
         <CardContent className="space-y-6">
           <div className="grid gap-3">
             <Label htmlFor="schema-name" className="text-base font-medium">
-              Schema Name
+              Schema Name{" "}
+              <span className="text-destructive" aria-label="required">
+                *
+              </span>
             </Label>
             <Input
               id="schema-name"
@@ -210,6 +214,8 @@ export function SchemaBuilder() {
               value={schemaName}
               onChange={(e) => setSchemaName(e.target.value)}
               className="h-12 text-base"
+              required
+              aria-required="true"
             />
           </div>
           <div className="grid gap-3">
@@ -222,15 +228,26 @@ export function SchemaBuilder() {
               value={schemaDescription}
               onChange={(e) => setSchemaDescription(e.target.value)}
               className="min-h-[100px] text-base"
+              aria-describedby="schema-description-hint"
             />
+            <p id="schema-description-hint" className="text-sm text-muted-foreground">
+              Optional: Provide context about how this schema will be used
+            </p>
           </div>
         </CardContent>
       </Card>
 
-      <Card className="border-0 bg-gradient-to-r from-primary/10 to-accent/10 shadow-soft">
+      <Card
+        className="border-0 bg-gradient-to-r from-primary/10 to-accent/10 shadow-soft"
+        role="note"
+        aria-label="AI generation information"
+      >
         <CardContent className="pt-6">
           <div className="flex items-start gap-4">
-            <div className="w-3 h-3 bg-gradient-to-r from-primary to-accent rounded-full mt-2 flex-shrink-0"></div>
+            <div
+              className="w-3 h-3 bg-gradient-to-r from-primary to-accent rounded-full mt-2 flex-shrink-0"
+              aria-hidden="true"
+            ></div>
             <div>
               <h3 className="font-semibold text-primary mb-2 text-lg">AI-Powered Generation</h3>
               <p className="text-base text-foreground/80">
@@ -249,50 +266,81 @@ export function SchemaBuilder() {
               <CardTitle className="text-2xl font-semibold">Schema Fields</CardTitle>
               <CardDescription className="text-lg">Define the structure of your synthetic data</CardDescription>
             </div>
-            <Button onClick={addField} size="lg" className="gradient-primary text-white shadow-soft w-full sm:w-auto">
-              <Plus className="mr-2 h-5 w-5" />
+            <Button
+              onClick={addField}
+              size="lg"
+              className="gradient-primary text-white shadow-soft w-full sm:w-auto"
+              aria-label="Add new field to schema"
+            >
+              <Plus className="mr-2 h-5 w-5" aria-hidden="true" />
               Add Field
             </Button>
           </div>
         </CardHeader>
         <CardContent>
           {fields.length === 0 ? (
-            <div className="text-center py-12 border-2 border-dashed border-primary/20 rounded-xl bg-gradient-to-br from-primary/5 to-accent/5">
-              <p className="text-muted-foreground mb-6 text-lg">No fields added yet</p>
-              <Button
-                onClick={addField}
-                variant="outline"
-                size="lg"
-                className="border-primary/20 hover:bg-primary/5 bg-transparent"
-              >
-                <Plus className="mr-2 h-5 w-5" />
-                Add Your First Field
-              </Button>
-            </div>
+            <Empty className="border-2 border-dashed border-primary/20 bg-gradient-to-br from-primary/5 to-accent/5">
+              <EmptyHeader>
+                <EmptyTitle>No fields added yet</EmptyTitle>
+                <EmptyDescription>Add your first field to start building your schema</EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button
+                  onClick={addField}
+                  variant="outline"
+                  size="lg"
+                  className="border-primary/20 hover:bg-primary/5 bg-transparent"
+                  aria-label="Add your first field"
+                >
+                  <Plus className="mr-2 h-5 w-5" aria-hidden="true" />
+                  Add Your First Field
+                </Button>
+              </EmptyContent>
+            </Empty>
           ) : (
-            <div className="space-y-6">
+            <div className="space-y-6" role="list" aria-label="Schema fields">
               {fields.map((field, index) => {
                 const fieldType = FIELD_TYPES.find((t) => t.value === field.type)
                 return (
-                  <div key={field.id} className="border border-border/50 rounded-xl p-6 bg-card/30 shadow-soft">
+                  <div
+                    key={field.id}
+                    className="border border-border/50 rounded-xl p-6 bg-card/30 shadow-soft"
+                    role="listitem"
+                  >
                     <div className="flex flex-col lg:flex-row items-start gap-4">
-                      <div className="hidden lg:flex flex-shrink-0 mt-2">
+                      <div className="hidden lg:flex flex-shrink-0 mt-2" aria-hidden="true">
                         <GripVertical className="h-4 w-4 text-gray-400" />
                       </div>
                       <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 w-full">
                         <div className="sm:col-span-2 lg:col-span-1">
-                          <Label htmlFor={`field-name-${field.id}`}>Field Name</Label>
+                          <Label htmlFor={`field-name-${field.id}`}>
+                            Field Name{" "}
+                            <span className="text-destructive" aria-label="required">
+                              *
+                            </span>
+                          </Label>
                           <Input
                             id={`field-name-${field.id}`}
                             placeholder="e.g., first_name"
                             value={field.name}
                             onChange={(e) => updateField(field.id, { name: e.target.value })}
+                            required
+                            aria-required="true"
                           />
                         </div>
                         <div className="sm:col-span-2 lg:col-span-1">
-                          <Label htmlFor={`field-type-${field.id}`}>Type</Label>
-                          <Select value={field.type} onValueChange={(value) => updateField(field.id, { type: value })}>
-                            <SelectTrigger>
+                          <Label htmlFor={`field-type-${field.id}`}>
+                            Type{" "}
+                            <span className="text-destructive" aria-label="required">
+                              *
+                            </span>
+                          </Label>
+                          <Select
+                            value={field.type}
+                            onValueChange={(value) => updateField(field.id, { type: value })}
+                            required
+                          >
+                            <SelectTrigger id={`field-type-${field.id}`} aria-label="Select field type">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -301,10 +349,10 @@ export function SchemaBuilder() {
                                   <div className="flex items-center gap-2">
                                     <div>
                                       <div className="font-medium flex items-center gap-2">
-                                        {type.icon && <type.icon className="h-3 w-3" />}
+                                        {type.icon && <type.icon className="h-3 w-3" aria-hidden="true" />}
                                         {type.label}
                                         {type.ai && (
-                                          <Badge variant="secondary" className="text-xs">
+                                          <Badge variant="secondary" className="text-xs" aria-label="AI-powered">
                                             AI
                                           </Badge>
                                         )}
@@ -324,16 +372,21 @@ export function SchemaBuilder() {
                             placeholder="Describe this field..."
                             value={field.description}
                             onChange={(e) => updateField(field.id, { description: e.target.value })}
+                            aria-describedby={fieldType?.ai ? `field-ai-hint-${field.id}` : undefined}
                           />
                           {fieldType?.ai && (
-                            <p className="text-xs text-blue-600 mt-1">
+                            <p id={`field-ai-hint-${field.id}`} className="text-xs text-blue-600 mt-1">
                               AI will use this description to generate more relevant content
                             </p>
                           )}
                         </div>
                       </div>
                       <div className="flex flex-row lg:flex-col items-center gap-2 w-full lg:w-auto">
-                        <Badge variant={field.required ? "default" : "secondary"} className="flex-shrink-0">
+                        <Badge
+                          variant={field.required ? "default" : "secondary"}
+                          className="flex-shrink-0"
+                          aria-label={field.required ? "Required field" : "Optional field"}
+                        >
                           {field.required ? "Required" : "Optional"}
                         </Badge>
                         <div className="flex gap-1">
@@ -342,11 +395,18 @@ export function SchemaBuilder() {
                             size="sm"
                             onClick={() => updateField(field.id, { required: !field.required })}
                             className="text-xs"
+                            aria-label={`Toggle field requirement: currently ${field.required ? "required" : "optional"}`}
                           >
                             Toggle
                           </Button>
-                          <Button variant="ghost" size="sm" onClick={() => removeField(field.id)}>
-                            <Trash2 className="h-4 w-4" />
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => removeField(field.id)}
+                            aria-label={`Remove field: ${field.name || "unnamed field"}`}
+                          >
+                            <Trash2 className="h-4 w-4" aria-hidden="true" />
+                            <span className="sr-only">Remove field</span>
                           </Button>
                         </div>
                       </div>
@@ -359,12 +419,17 @@ export function SchemaBuilder() {
         </CardContent>
       </Card>
 
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-6 pt-4">
+      <div
+        className="flex flex-col sm:flex-row items-center justify-between gap-6 pt-4"
+        role="group"
+        aria-label="Schema actions"
+      >
         <Button
           variant="outline"
           onClick={() => router.back()}
           size="lg"
           className="w-full sm:w-auto border-primary/20 hover:bg-primary/5"
+          aria-label="Cancel and go back"
         >
           Cancel
         </Button>
@@ -374,6 +439,8 @@ export function SchemaBuilder() {
             disabled={fields.length === 0}
             size="lg"
             className="w-full sm:w-auto border-accent/20 hover:bg-accent/5 bg-transparent"
+            aria-label="Preview schema"
+            aria-disabled={fields.length === 0}
           >
             Preview
           </Button>
@@ -382,8 +449,17 @@ export function SchemaBuilder() {
             disabled={isSaving || !schemaName.trim() || fields.length === 0}
             size="lg"
             className="w-full sm:w-auto gradient-primary text-white shadow-medium"
+            aria-label={isSaving ? "Saving schema..." : "Save schema"}
+            aria-disabled={isSaving || !schemaName.trim() || fields.length === 0}
           >
-            {isSaving ? "Saving..." : "Save Schema"}
+            {isSaving ? (
+              <>
+                <Spinner className="mr-2 h-5 w-5" aria-hidden="true" />
+                Saving...
+              </>
+            ) : (
+              "Save Schema"
+            )}
           </Button>
         </div>
       </div>

@@ -1,0 +1,29 @@
+/**
+ * AWS and S3 configuration
+ * Centralized for cloud service settings
+ */
+
+export const AWS_CONFIG = {
+  // Default region
+  defaultRegion: "us-east-1",
+
+  // S3 bucket defaults
+  s3: {
+    defaultBucket: "client-synth-media",
+
+    // Path structure
+    paths: {
+      syntheticData: "synthetic-data",
+      temp: "temp",
+      exports: "exports",
+    },
+
+    // Content types
+    contentTypes: {
+      png: "image/png",
+      jpeg: "image/jpeg",
+      json: "application/json",
+      csv: "text/csv",
+    },
+  },
+} as const

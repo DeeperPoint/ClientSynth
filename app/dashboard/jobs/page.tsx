@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import Link from "next/link"
 import { formatDistanceToNow } from "date-fns"
+import { UI_CONFIG } from "@/lib/ui-config"
 
 interface Job {
   id: string
@@ -335,10 +336,10 @@ export default function JobsPage() {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
-        <div className="max-w-7xl mx-auto p-8">
-          <div className="animate-pulse space-y-8">
+        <div className={`max-w-7xl mx-auto ${UI_CONFIG.spacing.page.full}`}>
+          <div className={`animate-pulse ${UI_CONFIG.spacing.section.large}`}>
             <div className="h-12 bg-gradient-to-r from-primary/20 to-accent/20 rounded-2xl w-1/3"></div>
-            <div className="grid grid-cols-1 md:grid-cols-6 gap-6">
+            <div className={`grid grid-cols-1 md:grid-cols-6 ${UI_CONFIG.grid.gap.medium}`}>
               {[1, 2, 3, 4, 5, 6].map((i) => (
                 <div
                   key={i}
@@ -346,7 +347,7 @@ export default function JobsPage() {
                 ></div>
               ))}
             </div>
-            <div className="space-y-6">
+            <div className={UI_CONFIG.spacing.section.medium}>
               {[1, 2, 3].map((i) => (
                 <div
                   key={i}
@@ -364,10 +365,10 @@ export default function JobsPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
-      <div className="max-w-7xl mx-auto p-8">
+      <div className={`max-w-7xl mx-auto ${UI_CONFIG.spacing.page.full}`}>
         <div className="flex items-center justify-between mb-12">
-          <div className="space-y-4">
-            <div className="flex items-center gap-4">
+          <div className={UI_CONFIG.spacing.section.small}>
+            <div className={`flex items-center ${UI_CONFIG.spacing.card.gap}`}>
               <div className="p-3 rounded-2xl bg-gradient-to-br from-primary to-accent shadow-xl">
                 <Sparkles className="h-8 w-8 text-white" />
               </div>
@@ -379,7 +380,7 @@ export default function JobsPage() {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-4">
+          <div className={`flex items-center ${UI_CONFIG.spacing.card.gap}`}>
             <Button
               variant="outline"
               onClick={refreshJobs}
@@ -401,7 +402,7 @@ export default function JobsPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-6 gap-6 mb-12">
+        <div className={`grid grid-cols-1 md:grid-cols-6 ${UI_CONFIG.grid.gap.medium} mb-12`}>
           <Card className="relative overflow-hidden border-0 bg-gradient-to-br from-white/80 to-white/40 backdrop-blur-xl shadow-2xl hover:shadow-3xl transition-all duration-500 transform hover:scale-105 group">
             <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-accent/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
             <CardContent className="pt-8 pb-8 relative z-10">
@@ -471,9 +472,9 @@ export default function JobsPage() {
           </Card>
         </div>
 
-        <Card className="mb-12 border-0 bg-gradient-to-r from-white/90 to-white/70 backdrop-blur-2xl shadow-2xl">
+        <Card className={`mb-12 border-0 bg-gradient-to-r from-white/90 to-white/70 backdrop-blur-2xl shadow-2xl`}>
           <CardContent className="pt-8 pb-8">
-            <div className="flex flex-col lg:flex-row gap-6">
+            <div className={`flex flex-col lg:flex-row ${UI_CONFIG.grid.gap.medium}`}>
               <div className="flex-1">
                 <div className="relative">
                   <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-primary" />
@@ -542,47 +543,56 @@ export default function JobsPage() {
                   </Select>
                 </div>
               </div>
-            </div>
 
-            {selectedJobs.length > 0 && (
-              <div className="mt-8 p-6 bg-gradient-to-r from-primary/10 to-accent/10 border-2 border-primary/30 rounded-2xl backdrop-blur-sm">
-                <div className="flex items-center justify-between">
-                  <span className="text-lg font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-                    {selectedJobs.length} job(s) selected
-                  </span>
-                  <div className="flex items-center gap-3">
-                    <Button
-                      size="lg"
-                      variant="outline"
-                      onClick={bulkRetryJobs}
-                      className="border-2 border-primary/30 hover:bg-primary/10 bg-transparent"
-                    >
-                      <RotateCcw className="mr-2 h-5 w-5" />
-                      Retry Selected
-                    </Button>
-                    <Button
-                      size="lg"
-                      variant="outline"
-                      onClick={bulkDeleteJobs}
-                      className="border-2 border-red-300 hover:bg-red-50 text-red-600 bg-transparent"
-                    >
-                      <Trash2 className="mr-2 h-5 w-5" />
-                      Delete Selected
-                    </Button>
-                    <Button size="lg" variant="ghost" onClick={() => setSelectedJobs([])} className="hover:bg-white/50">
-                      Cancel
-                    </Button>
+              {selectedJobs.length > 0 && (
+                <div
+                  className={`mt-8 ${UI_CONFIG.spacing.card.padding} bg-gradient-to-r from-primary/10 to-accent/10 border-2 border-primary/30 ${UI_CONFIG.border.radius.large} backdrop-blur-sm`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-lg font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+                      {selectedJobs.length} job(s) selected
+                    </span>
+                    <div className={`flex items-center ${UI_CONFIG.spacing.card.gap}`}>
+                      <Button
+                        size="lg"
+                        variant="outline"
+                        onClick={bulkRetryJobs}
+                        className="border-2 border-primary/30 hover:bg-primary/10 bg-transparent"
+                      >
+                        <RotateCcw className="mr-2 h-5 w-5" />
+                        Retry Selected
+                      </Button>
+                      <Button
+                        size="lg"
+                        variant="outline"
+                        onClick={bulkDeleteJobs}
+                        className="border-2 border-red-300 hover:bg-red-50 text-red-600 bg-transparent"
+                      >
+                        <Trash2 className="mr-2 h-5 w-5" />
+                        Delete Selected
+                      </Button>
+                      <Button
+                        size="lg"
+                        variant="ghost"
+                        onClick={() => setSelectedJobs([])}
+                        className="hover:bg-white/50"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </CardContent>
         </Card>
 
         {filteredJobs.length === 0 ? (
-          <Card className="border-0 bg-gradient-to-br from-white/90 to-white/70 backdrop-blur-2xl shadow-2xl">
+          <Card className={`border-0 bg-gradient-to-br from-white/90 to-white/70 backdrop-blur-2xl shadow-2xl`}>
             <CardContent className="pt-16 pb-16 text-center">
-              <div className="p-6 rounded-3xl bg-gradient-to-br from-primary/10 to-accent/10 w-fit mx-auto mb-6">
+              <div
+                className={`${UI_CONFIG.spacing.card.padding} ${UI_CONFIG.border.radius.large} bg-gradient-to-br from-primary/10 to-accent/10 w-fit mx-auto mb-6`}
+              >
                 <Play className="mx-auto h-16 w-16 text-primary" />
               </div>
               <h3 className="text-2xl font-bold text-foreground mb-3">
@@ -604,10 +614,10 @@ export default function JobsPage() {
             </CardContent>
           </Card>
         ) : (
-          <div className="space-y-8">
-            <Card className="border-0 bg-gradient-to-br from-white/90 to-white/70 backdrop-blur-2xl shadow-xl">
+          <div className={UI_CONFIG.spacing.section.large}>
+            <Card className={`border-0 bg-gradient-to-br from-white/90 to-white/70 backdrop-blur-2xl shadow-xl`}>
               <CardContent className="pt-6 pb-6">
-                <div className="flex items-center gap-4">
+                <div className={`flex items-center ${UI_CONFIG.spacing.card.gap}`}>
                   <Checkbox
                     checked={selectedJobs.length === filteredJobs.length && filteredJobs.length > 0}
                     onCheckedChange={toggleSelectAll}
@@ -621,14 +631,14 @@ export default function JobsPage() {
             {filteredJobs.map((job) => (
               <Card
                 key={job.id}
-                className={`border-0 bg-gradient-to-r from-white/90 to-white/70 backdrop-blur-2xl shadow-2xl hover:shadow-3xl transition-all duration-500 transform hover:scale-[1.02] ${
+                className={`border-0 bg-gradient-to-r from-white/90 to-white/70 backdrop-blur-2xl shadow-2xl hover:shadow-3xl ${UI_CONFIG.animation.transition} transform hover:scale-[1.02] ${
                   selectedJobs.includes(job.id)
                     ? "ring-4 ring-primary/40 bg-gradient-to-r from-primary/5 to-accent/5"
                     : ""
                 }`}
               >
                 <CardContent className="pt-8 pb-8">
-                  <div className="flex items-start gap-6">
+                  <div className={`flex items-start ${UI_CONFIG.grid.gap.medium}`}>
                     <Checkbox
                       checked={selectedJobs.includes(job.id)}
                       onCheckedChange={() => toggleJobSelection(job.id)}
@@ -636,7 +646,7 @@ export default function JobsPage() {
                     />
 
                     <div className="flex-1">
-                      <div className="flex items-center gap-4 mb-4">
+                      <div className={`flex items-center ${UI_CONFIG.spacing.card.gap} mb-4`}>
                         <h3 className="text-2xl font-bold text-foreground">{job.name}</h3>
                         <Badge
                           className={`${getStatusColor(job.status)} flex items-center gap-2 border-2 px-4 py-2 text-sm font-semibold`}
@@ -651,7 +661,7 @@ export default function JobsPage() {
                         )}
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                      <div className={`grid grid-cols-1 md:grid-cols-4 ${UI_CONFIG.spacing.card.gap} mb-4`}>
                         <div>
                           <div className="text-sm text-muted-foreground">Schema</div>
                           <Link
@@ -690,14 +700,16 @@ export default function JobsPage() {
                         </div>
                         <Progress value={job.progress} className="h-4 bg-gray-100 rounded-full overflow-hidden">
                           <div
-                            className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-500 rounded-full"
+                            className={`h-full bg-gradient-to-r from-primary to-accent ${UI_CONFIG.animation.transition} rounded-full`}
                             style={{ width: `${job.progress}%` }}
                           />
                         </Progress>
                       </div>
 
                       {job.error_message && (
-                        <div className="bg-destructive/5 border border-destructive/20 rounded-xl p-4 mb-4">
+                        <div
+                          className={`bg-destructive/5 border border-destructive/20 ${UI_CONFIG.border.radius.large} ${UI_CONFIG.spacing.card.padding} mb-4`}
+                        >
                           <div className="flex items-start gap-2">
                             <AlertCircle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
                             <div className="text-sm text-destructive">{job.error_message}</div>
@@ -706,7 +718,7 @@ export default function JobsPage() {
                       )}
                     </div>
 
-                    <div className="flex items-center gap-3">
+                    <div className={`flex items-center ${UI_CONFIG.spacing.card.gap}`}>
                       <Button
                         variant="outline"
                         size="lg"

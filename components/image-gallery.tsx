@@ -7,6 +7,8 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
 import { Download, Eye, RefreshCw, Trash2, ZoomIn } from "lucide-react"
+import { Spinner } from "@/components/ui/spinner"
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 
 interface MediaItem {
   id: string
@@ -106,23 +108,24 @@ export function ImageGallery({ jobId, tenantId }: ImageGalleryProps) {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center p-8">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+      <div className="flex items-center justify-center p-8" role="status" aria-label="Loading images">
+        <Spinner className="h-8 w-8" />
+        <span className="sr-only">Loading images...</span>
       </div>
     )
   }
 
   if (images.length === 0) {
     return (
-      <Card className="border-dashed border-2 border-gray-300">
-        <CardContent className="flex flex-col items-center justify-center p-8 text-center">
-          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
-            <Eye className="w-8 h-8 text-gray-400" />
-          </div>
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No Images Generated</h3>
-          <p className="text-gray-500">Images will appear here once the job generates them.</p>
-        </CardContent>
-      </Card>
+      <Empty className="border-2 border-dashed border-muted">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <Eye className="w-8 h-8" aria-hidden="true" />
+          </EmptyMedia>
+          <EmptyTitle>No Images Generated</EmptyTitle>
+          <EmptyDescription>Images will appear here once the job generates them.</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
     )
   }
 
@@ -138,20 +141,28 @@ export function ImageGallery({ jobId, tenantId }: ImageGalleryProps) {
             Total Size: {formatFileSize(images.reduce((sum, img) => sum + img.file_size, 0))}
           </Badge>
         </div>
-        <Button onClick={loadImages} variant="outline" size="sm">
-          <RefreshCw className="w-4 h-4 mr-2" />
+        <Button onClick={loadImages} variant="outline" size="sm" aria-label="Refresh image gallery">
+          <RefreshCw className="w-4 h-4 mr-2" aria-hidden="true" />
           Refresh
         </Button>
       </div>
 
       {/* Image Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      <div
+        className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
+        role="list"
+        aria-label="Generated images"
+      >
         {images.map((item) => (
-          <Card key={item.id} className="group hover:shadow-lg transition-all duration-200 overflow-hidden">
+          <Card
+            key={item.id}
+            className="group hover:shadow-lg transition-all duration-200 overflow-hidden"
+            role="listitem"
+          >
             <div className="relative aspect-square">
               <img
                 src={getImageUrl(item) || "/placeholder.svg"}
-                alt={`Generated image for record ${item.record_id}`}
+                alt={`AI-generated image: ${item.prompt.substring(0, 100)}`}
                 className="w-full h-full object-cover"
                 loading="lazy"
               />
@@ -160,8 +171,14 @@ export function ImageGallery({ jobId, tenantId }: ImageGalleryProps) {
               <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center gap-2">
                 <Dialog>
                   <DialogTrigger asChild>
-                    <Button size="sm" variant="secondary" onClick={() => setSelectedImage(item)}>
-                      <ZoomIn className="w-4 h-4" />
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => setSelectedImage(item)}
+                      aria-label={`View full size image: ${item.prompt.substring(0, 50)}`}
+                    >
+                      <ZoomIn className="w-4 h-4" aria-hidden="true" />
+                      <span className="sr-only">View full size</span>
                     </Button>
                   </DialogTrigger>
                   <DialogContent className="max-w-4xl">
@@ -172,7 +189,7 @@ export function ImageGallery({ jobId, tenantId }: ImageGalleryProps) {
                       <div className="space-y-4">
                         <img
                           src={getImageUrl(selectedImage) || "/placeholder.svg"}
-                          alt="Full size image"
+                          alt={`Full size: ${selectedImage.prompt}`}
                           className="w-full max-h-96 object-contain rounded-lg"
                         />
                         <div className="grid grid-cols-2 gap-4 text-sm">
@@ -202,22 +219,41 @@ export function ImageGallery({ jobId, tenantId }: ImageGalleryProps) {
                   variant="secondary"
                   onClick={() => regenerateImage(item)}
                   disabled={regenerating === item.id}
+                  aria-label={`Regenerate image: ${item.prompt.substring(0, 50)}`}
                 >
                   {regenerating === item.id ? (
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current" />
+                    <>
+                      <Spinner className="h-4 w-4" aria-hidden="true" />
+                      <span className="sr-only">Regenerating...</span>
+                    </>
                   ) : (
-                    <RefreshCw className="w-4 h-4" />
+                    <>
+                      <RefreshCw className="w-4 h-4" aria-hidden="true" />
+                      <span className="sr-only">Regenerate</span>
+                    </>
                   )}
                 </Button>
 
-                <Button size="sm" variant="secondary" asChild>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  asChild
+                  aria-label={`Download image: ${item.prompt.substring(0, 50)}`}
+                >
                   <a href={getImageUrl(item)} download target="_blank" rel="noopener noreferrer">
-                    <Download className="w-4 h-4" />
+                    <Download className="w-4 h-4" aria-hidden="true" />
+                    <span className="sr-only">Download</span>
                   </a>
                 </Button>
 
-                <Button size="sm" variant="destructive" onClick={() => deleteImage(item)}>
-                  <Trash2 className="w-4 h-4" />
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => deleteImage(item)}
+                  aria-label={`Delete image: ${item.prompt.substring(0, 50)}`}
+                >
+                  <Trash2 className="w-4 h-4" aria-hidden="true" />
+                  <span className="sr-only">Delete</span>
                 </Button>
               </div>
             </div>

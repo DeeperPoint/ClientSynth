@@ -7,7 +7,7 @@ import type { User } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/client"
 import { TenantSwitcher } from "@/components/tenant-switcher"
 import { Button } from "@/components/ui/button"
-import { LogOut, Settings, UserIcon, FileText, Play, Download } from "lucide-react"
+import { LogOut, Settings, UserIcon, FileText, Play, Download, Sparkles } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -151,10 +151,16 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
   const navigation = [
     { name: "Dashboard", href: "/dashboard", icon: Settings, current: pathname === "/dashboard" },
     {
+      name: "Quick Generate",
+      href: "/dashboard/quick-generate",
+      icon: Sparkles,
+      current: pathname === "/dashboard/quick-generate",
+    },
+    {
       name: "Schema Studio",
-      href: "/dashboard/schemas", // Updated to use plural schemas for listing
+      href: "/dashboard/schemas",
       icon: FileText,
-      current: pathname.startsWith("/dashboard/schema"), // Keep schema check for both /schema/new and /schemas routes
+      current: pathname.startsWith("/dashboard/schema"),
     },
     { name: "Job Console", href: "/dashboard/jobs", icon: Play, current: pathname.startsWith("/dashboard/jobs") },
     { name: "Exports", href: "/dashboard/exports", icon: Download, current: pathname.startsWith("/dashboard/exports") },
