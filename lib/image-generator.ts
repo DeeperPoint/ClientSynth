@@ -25,7 +25,6 @@ export class ImageGenerator {
   }): Promise<ImageGenerationResult> {
     const request: ImageGenerationRequest = {
       ...options,
-      provider: "google-flash",
       style: "professional",
     }
 
@@ -33,6 +32,6 @@ export class ImageGenerator {
   }
 
   setModel(modelId: string): void {
-    console.log(`[ImageGenerator] Model setting is now handled by provider selection: ${modelId}`)
+    console.log(`[ImageGenerator] Model setting is now handled by OpenRouter provider: ${modelId}`)
   }
 }

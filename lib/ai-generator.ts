@@ -1,6 +1,3 @@
-import { generateText } from "ai"
-import { createOpenRouter } from "@openrouter/ai-sdk-provider"
-
 export interface GenerationContext {
   fieldType: string
   fieldName: string
@@ -11,145 +8,106 @@ export interface GenerationContext {
 }
 
 export class AIGenerator {
-  private openrouter = createOpenRouter({
-    apiKey: process.env.OPENROUTER_API_KEY,
-  })
+  private apiKey: string | undefined
+  private model = "google/gemini-2.5-flash"
 
-  private currentModel = "google/gemini-2.5-flash"
-  private model = this.openrouter(this.currentModel)
+  constructor(apiKey?: string, model?: string) {
+    this.apiKey = apiKey || process.env.OPENROUTER_API_KEY
+    if (model) {
+      this.model = model
+    }
+
+    if (!this.apiKey) {
+      throw new Error("OPENROUTER_API_KEY environment variable is required for text generation")
+    }
+  }
 
   setModel(modelId: string): void {
-    this.currentModel = modelId
-    this.model = this.openrouter(modelId)
+    this.model = modelId
     console.log(`[AIGenerator] Switched to model: ${modelId}`)
   }
 
   getCurrentModel(): string {
-    return this.currentModel
+    return this.model
   }
 
   async generateFieldValue(context: GenerationContext): Promise<string> {
-    const { fieldType, fieldName, fieldDescription, recordIndex, existingData } = context
+    const system = this.systemPromptFor(context)
+    const prompt = this.buildPrompt(context)
 
-    try {
-      const prompt = this.buildPrompt(context)
+    console.log(`[AIGenerator] Generating with OpenRouter: ${this.model}`)
 
-      console.log(`[v0] Generating AI content for ${fieldName} with model ${this.currentModel}`)
-      console.log(`[v0] Prompt: ${prompt.substring(0, 100)}...`)
-
-      const { text } = await generateText({
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": process.env.OPENROUTER_SITE_URL || "http://localhost:3000",
+        "X-Title": process.env.OPENROUTER_APP_TITLE || "ClientSynth",
+      },
+      body: JSON.stringify({
         model: this.model,
-        prompt,
-        maxTokens: 150, // Increased token limit for better responses
-        temperature: 0.3, // Lower temperature for more consistent results
-      })
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: prompt },
+        ],
+        max_tokens: 100,
+        temperature: 0.6,
+      }),
+    })
 
-      console.log(`[v0] AI generated for ${fieldName}: ${text}`)
-
-      const cleanedText = text.trim().replace(/^["']|["']$/g, "") // Remove quotes if present
-      return cleanedText
-    } catch (error) {
-      console.error(`[v0] AI generation failed for ${fieldName}:`, error)
-      console.error(`[v0] Error details:`, {
-        message: error instanceof Error ? error.message : "Unknown error",
-        fieldName,
-        fieldType,
-        model: this.currentModel,
-      })
-
-      // Fallback to deterministic generation
-      const fallbackValue = this.getFallbackValue(fieldType, fieldName, recordIndex)
-      console.log(`[v0] Using fallback value for ${fieldName}: ${fallbackValue}`)
-      return fallbackValue
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`OpenRouter API error: ${response.status} ${response.statusText} - ${errorText}`)
     }
+
+    const data = await response.json()
+
+    if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+      throw new Error("Invalid response from OpenRouter API: missing choices or message")
+    }
+
+    const content = data.choices[0].message.content.trim()
+
+    console.log(`[AIGenerator] Generated: ${content}`)
+    return content
+  }
+
+  private systemPromptFor(context: GenerationContext): string {
+    const ft = context.fieldType
+    const prompts: Record<string, string> = {
+      name: "Generate realistic human names.",
+      email: "Generate realistic email addresses.",
+      company: "Generate realistic company names.",
+      text: "Generate short, realistic text snippet.",
+      description: "Generate concise descriptive text.",
+    }
+    return prompts[ft] || "Generate realistic data."
   }
 
   private buildPrompt(context: GenerationContext): string {
-    const { fieldType, fieldName, fieldDescription, recordIndex, existingData } = context
+    const { fieldName, fieldDescription, existingData } = context
+    const parts: string[] = [`Field: ${fieldName}`]
 
-    // Build context from existing data in the record
-    const contextInfo = existingData ? this.buildContextFromExistingData(existingData) : ""
-
-    const basePrompts: Record<string, string> = {
-      name: `Generate a realistic full name (first and last name).`,
-      first_name: `Generate a realistic first name only.`,
-      last_name: `Generate a realistic last name only.`,
-      email: `Generate a professional email address.`,
-      phone: `Generate a phone number in format (XXX) XXX-XXXX.`,
-      company: `Generate a realistic company name.`,
-      address: `Generate a realistic street address.`,
-      city: `Generate a real city name.`,
-      country: `Generate a real country name.`,
-      job_title: `Generate a realistic job title.`,
-      industry: `Generate a realistic industry name.`,
-      text: fieldDescription
-        ? `Generate realistic content for: ${fieldDescription}`
-        : `Generate realistic ${fieldName.replace(/_/g, " ")} content.`,
-      long_text: fieldDescription
-        ? `Generate a realistic paragraph about: ${fieldDescription}`
-        : `Generate a realistic paragraph about ${fieldName.replace(/_/g, " ")}.`,
-      url: `Generate a realistic website URL.`,
+    if (fieldDescription) {
+      parts.push(`Description: ${fieldDescription}`)
     }
 
-    const specificPrompt =
-      basePrompts[fieldType] || basePrompts[fieldName] || `Generate realistic ${fieldName.replace(/_/g, " ")} content.`
-
-    return `${specificPrompt} ${contextInfo} Return only the generated value, no explanations or quotes.`
-  }
-
-  private buildContextFromExistingData(existingData: Record<string, any>): string {
-    const relevantFields = ["name", "company", "industry", "job_title", "city", "country"]
-    const context = relevantFields
-      .filter((field) => existingData[field])
-      .map((field) => `${field}: ${existingData[field]}`)
-      .join(", ")
-
-    return context ? `Context from this record: ${context}.` : ""
-  }
-
-  private getFallbackValue(fieldType: string, fieldName: string, recordIndex: number): string {
-    // Deterministic fallback values
-    switch (fieldType) {
-      case "name":
-        return this.generateFallbackName(recordIndex)
-      case "email":
-        return `user${recordIndex}@example.com`
-      case "phone":
-        return `(555) ${String(recordIndex).padStart(3, "0")}-${String(recordIndex * 7).slice(-4)}`
-      case "company":
-        return `Company ${recordIndex + 1}`
-      case "address":
-        return `${100 + recordIndex} Main Street`
-      case "city":
-        return ["New York", "Los Angeles", "Chicago", "Houston", "Phoenix"][recordIndex % 5]
-      case "country":
-        return "United States"
-      case "job_title":
-        return ["Manager", "Director", "Analyst", "Coordinator", "Specialist"][recordIndex % 5]
-      case "industry":
-        return ["Technology", "Healthcare", "Finance", "Education", "Manufacturing"][recordIndex % 5]
-      case "url":
-        return `https://website${recordIndex}.com`
-      case "text":
-      case "long_text":
-        return `Sample ${fieldName} content ${recordIndex + 1}`
-      default:
-        return `${fieldName} ${recordIndex + 1}`
+    if (existingData && Object.keys(existingData).length > 0) {
+      const pairs = Object.entries(existingData)
+        .filter(([_, v]) => v !== null && v !== undefined)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(", ")
+      if (pairs) {
+        parts.push(`Context: ${pairs}`)
+      }
     }
-  }
 
-  private generateFallbackName(index: number): string {
-    const firstNames = ["Alex", "Jordan", "Taylor", "Casey", "Morgan", "Riley", "Avery", "Quinn"]
-    const lastNames = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis"]
-
-    const firstName = firstNames[index % firstNames.length]
-    const lastName = lastNames[Math.floor(index / firstNames.length) % lastNames.length]
-
-    return `${firstName} ${lastName}`
+    parts.push("Return only the value.")
+    return parts.join("\n")
   }
 
   async generateBatch(contexts: GenerationContext[]): Promise<string[]> {
-    // Generate multiple fields in parallel for better performance
     const promises = contexts.map((context) => this.generateFieldValue(context))
     return Promise.all(promises)
   }

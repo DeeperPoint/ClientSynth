@@ -87,6 +87,10 @@ export class JobProcessor {
         },
       })
 
+      if (!process.env.OPENROUTER_API_KEY) {
+        throw new Error("OPENROUTER_API_KEY environment variable is required for AI generation")
+      }
+
       console.log("[v0] Initializing AI generator...")
       this.aiGenerator = new AIGenerator()
 
@@ -328,7 +332,7 @@ export class JobProcessor {
       console.log(`[v0][SERVER][JobProcessor] Processing job ${job.job_id}: ${job.name}`)
 
       const textModel = job.config.text_model || "google/gemini-2.5-flash"
-      const imageModel = job.config.image_model || "gemini-2.0-flash-exp"
+      const imageModel = job.config.image_model || "black-forest-labs/flux-1.1-pro"
 
       console.log("[v0] Setting AI models:", { textModel, imageModel })
       this.aiGenerator.setModel(textModel)
@@ -581,16 +585,10 @@ export class JobProcessor {
       console.log(`[v0] Generating ${imageFields.length} image fields with context:`, record)
 
       for (const field of imageFields) {
-        try {
-          console.log(`[v0] Generating AI image for field: ${field.name}`)
-          const imageUrl = await this.generateAIImage(field, record, recordIndex, job)
-          record[field.name] = imageUrl
-          console.log(`[v0] Generated image URL for ${field.name}:`, imageUrl)
-        } catch (error) {
-          console.error(`[v0][SERVER][JobProcessor] Failed to generate image for ${field.name}:`, error)
-          record[field.name] = this.generatePlaceholderImage(recordIndex)
-          console.log(`[v0] Using placeholder image for ${field.name}:`, record[field.name])
-        }
+        console.log(`[v0] Generating AI image for field: ${field.name}`)
+        const imageUrl = await this.generateAIImage(field, record, recordIndex, job)
+        record[field.name] = imageUrl
+        console.log(`[v0] Generated image URL for ${field.name}:`, imageUrl)
       }
     }
 
@@ -604,62 +602,54 @@ export class JobProcessor {
     recordIndex: number,
     job: JobData,
   ): Promise<string> {
-    try {
-      const imagesPerRecord = job.config.images_per_record || 1
-      const imageModel = job.config.image_model || "gemini-2.0-flash-exp"
+    const imagesPerRecord = job.config.images_per_record || 1
+    const imageModel = job.config.image_model || "black-forest-labs/flux-1.1-pro"
 
-      const contextPrompt = this.buildImagePrompt(field, recordData)
+    const contextPrompt = this.buildImagePrompt(field, recordData)
 
-      console.log(
-        `[v0][SERVER][JobProcessor] Generating ${imagesPerRecord} image(s) for ${field.name} using ${imageModel}`,
-      )
+    console.log(
+      `[v0][SERVER][JobProcessor] Generating ${imagesPerRecord} image(s) for ${field.name} using ${imageModel}`,
+    )
 
-      const imageResult = await this.imageGenerator.generateAndUploadImage({
-        tenantId: job.tenant_id,
-        jobId: job.job_id,
-        recordId: `record_${recordIndex}`,
-        fieldName: field.name,
-        prompt: contextPrompt,
-        recordData,
+    const imageResult = await this.imageGenerator.generateAndUploadImage({
+      tenantId: job.tenant_id,
+      jobId: job.job_id,
+      recordId: `record_${recordIndex}`,
+      fieldName: field.name,
+      prompt: contextPrompt,
+      recordData,
+      fieldDescription: field.description,
+      model: imageModel,
+      count: imagesPerRecord,
+    })
+
+    await this.supabase.from("media").insert({
+      tenant_id: job.tenant_id,
+      job_id: job.job_id,
+      record_id: `record_${recordIndex}`,
+      field_name: field.name,
+      s3_key: imageResult.s3Key,
+      s3_url: imageResult.url,
+      content_type: "image/png",
+      file_size: imageResult.fileSize || 0,
+      md5_hash: imageResult.md5Hash || "",
+      model_used: imageModel,
+      prompt_used: contextPrompt,
+      generation_metadata: {
+        recordData: recordData,
         fieldDescription: field.description,
-        model: imageModel,
-        count: imagesPerRecord,
-      })
+        imagesPerRecord,
+        generationTime: new Date().toISOString(),
+      },
+    })
 
-      await this.supabase.from("media").insert({
-        tenant_id: job.tenant_id,
-        job_id: job.job_id,
-        record_id: `record_${recordIndex}`,
-        field_name: field.name,
-        s3_key: imageResult.s3Key,
-        s3_url: imageResult.url,
-        content_type: "image/png",
-        file_size: imageResult.fileSize || 0,
-        md5_hash: imageResult.md5Hash || "",
-        model_used: imageModel,
-        prompt_used: contextPrompt,
-        generation_metadata: {
-          recordData: recordData,
-          fieldDescription: field.description,
-          imagesPerRecord,
-          generationTime: new Date().toISOString(),
-        },
-      })
+    await this.logJobMessage(job.job_id, "info", `Generated AI image for field: ${field.name}`, {
+      model: imageModel,
+      s3Key: imageResult.s3Key,
+      prompt: contextPrompt,
+    })
 
-      await this.logJobMessage(job.job_id, "info", `Generated AI image for field: ${field.name}`, {
-        model: imageModel,
-        s3Key: imageResult.s3Key,
-        prompt: contextPrompt,
-      })
-
-      return imageResult.url
-    } catch (error) {
-      console.error(`[v0][SERVER][JobProcessor] Failed to generate AI image for field ${field.name}:`, error)
-      await this.logJobMessage(job.job_id, "error", `Failed to generate AI image for field: ${field.name}`, {
-        error: error instanceof Error ? error.message : "Unknown error",
-      })
-      return this.generatePlaceholderImage(recordIndex)
-    }
+    return imageResult.url
   }
 
   private buildImagePrompt(field: any, recordData: Record<string, any>): string {
@@ -747,8 +737,6 @@ export class JobProcessor {
         return this.generateDate()
       case "boolean":
         return Math.random() > 0.5
-      case "image":
-        return this.generatePlaceholderImage(recordIndex)
       default:
         return `Sample ${name} ${recordIndex + 1}`
     }
@@ -865,13 +853,6 @@ export class JobProcessor {
     const end = new Date()
     const randomDate = new Date(start.getTime() + Math.random() * (end.getTime() - start.getTime()))
     return randomDate.toISOString().split("T")[0]
-  }
-
-  private generatePlaceholderImage(index: number): string {
-    const width = 400
-    const height = 400
-    const seed = index
-    return `/placeholder.svg?height=${height}&width=${width}&query=profile-photo-${seed}`
   }
 
   private async logJobMessage(jobId: string, level: string, message: string, metadata: any = {}): Promise<void> {

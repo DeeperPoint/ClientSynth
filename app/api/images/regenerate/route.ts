@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
       s3_key: result.s3Key,
       s3_bucket: process.env.AWS_S3_BUCKET || "client-synth-media",
       md5_hash: result.md5Hash,
-      width: 512, // Default dimensions
+      width: 512,
       height: 512,
       file_size: result.fileSize,
       model_name: model,
@@ -69,8 +69,9 @@ export async function POST(request: NextRequest) {
     console.error("Image regeneration error:", error)
     return NextResponse.json(
       {
-        error: "Failed to regenerate image",
+        error: "Image regeneration failed",
         details: error instanceof Error ? error.message : "Unknown error",
+        message: "Please check your OpenRouter API key and try again",
       },
       { status: 500 },
     )

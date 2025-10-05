@@ -13,7 +13,6 @@ export async function POST(request: NextRequest) {
       model,
       recordData,
       fieldDescription,
-      provider = "google-flash",
       style = "professional",
     } = await request.json()
 
@@ -42,7 +41,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 })
     }
 
-    console.log(`[ImageAPI] Generating image for field: ${fieldName} using provider: ${provider}`)
+    console.log(`[ImageAPI] Generating image for field: ${fieldName} using OpenRouter`)
 
     const imageService = new ImageGenerationService()
     const result = await imageService.generateAndUploadImage({
@@ -53,7 +52,6 @@ export async function POST(request: NextRequest) {
       prompt,
       recordData,
       fieldDescription,
-      provider,
       style,
       model,
     })
@@ -68,8 +66,9 @@ export async function POST(request: NextRequest) {
     console.error("[ImageAPI] Image generation error:", error)
     return NextResponse.json(
       {
-        error: "Failed to generate image",
+        error: "Image generation failed",
         details: error instanceof Error ? error.message : "Unknown error",
+        message: "Please check your OpenRouter API key and try again",
       },
       { status: 500 },
     )
