@@ -38,7 +38,7 @@ export default function GenerateDataPage() {
   const [isGenerating, setIsGenerating] = useState(false)
 
   const [textModel, setTextModel] = useState("google/gemini-2.5-flash")
-  const [imageModel, setImageModel] = useState("black-forest-labs/flux-1.1-pro")
+  const [imageModel, setImageModel] = useState("google/gemini-2.5-flash-image-preview")
   const [availableModels, setAvailableModels] = useState<AIModel[]>([])
   const [outputFormat, setOutputFormat] = useState("csv")
   const [enableImages, setEnableImages] = useState(true)
@@ -278,16 +278,22 @@ export default function GenerateDataPage() {
                         <SelectValue placeholder="Select image model" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="black-forest-labs/flux-1.1-pro">
+                        <SelectItem value="google/gemini-2.5-flash-image-preview">
                           <div className="flex flex-col">
-                            <span className="font-medium">FLUX 1.1 Pro</span>
+                            <span className="font-medium">Gemini 2.5 Flash Image</span>
+                            <span className="text-xs text-gray-500">Native image generation</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="openai/dall-e-3">
+                          <div className="flex flex-col">
+                            <span className="font-medium">DALL-E 3</span>
                             <span className="text-xs text-gray-500">$0.04/image</span>
                           </div>
                         </SelectItem>
-                        <SelectItem value="stability-ai/stable-diffusion-3.5-large">
+                        <SelectItem value="stability-ai/stable-diffusion-xl">
                           <div className="flex flex-col">
-                            <span className="font-medium">Stable Diffusion 3.5</span>
-                            <span className="text-xs text-gray-500">$0.065/image</span>
+                            <span className="font-medium">Stable Diffusion XL</span>
+                            <span className="text-xs text-gray-500">$0.03/image</span>
                           </div>
                         </SelectItem>
                       </SelectContent>

@@ -152,7 +152,7 @@ export default function QuickGeneratePage() {
           total_records: Number.parseInt(recordCount),
           config: {
             text_model: "google/gemini-2.5-flash",
-            image_model: "black-forest-labs/flux-1.1-pro",
+            image_model: "google/gemini-2.5-flash-image-preview",
             output_format: "csv",
             enable_images: selectedTemplate.fields.some((f) => f.type === "image"),
             images_per_record: 1,

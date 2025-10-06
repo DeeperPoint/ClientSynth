@@ -235,12 +235,7 @@ export class OpenRouterImageProvider extends BaseImageProvider {
   }
 
   getSupportedModels(): string[] {
-    return [
-      "google/gemini-2.5-flash-image-preview",
-      "black-forest-labs/flux-1.1-pro",
-      "openai/dall-e-3",
-      "stability-ai/stable-diffusion-xl",
-    ]
+    return ["google/gemini-2.5-flash-image-preview", "openai/dall-e-3", "stability-ai/stable-diffusion-xl"]
   }
 
   validateConfig(): boolean {

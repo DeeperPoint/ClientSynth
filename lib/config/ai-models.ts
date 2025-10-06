@@ -12,8 +12,8 @@ export const AI_MODELS = {
 
   // Image generation models
   image: {
-    default: "black-forest-labs/flux-1.1-pro",
-    alternatives: ["black-forest-labs/flux-schnell", "openai/dall-e-3", "stability-ai/stable-diffusion-xl"],
+    default: "google/gemini-2.5-flash-image-preview",
+    alternatives: ["openai/dall-e-3", "stability-ai/stable-diffusion-xl"],
   },
 } as const
 
