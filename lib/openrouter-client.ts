@@ -1,7 +1,14 @@
+// This file is now deprecated - use OpenRouterImageProvider directly
+
 interface OpenRouterResponse {
-  data?: Array<{
-    url?: string
-    b64_json?: string
+  choices?: Array<{
+    message?: {
+      content?: string
+      images?: Array<{
+        image_url?: { url: string }
+        url?: string
+      }>
+    }
   }>
   error?: {
     message: string
@@ -27,7 +34,7 @@ export class OpenRouterClient {
   }
 
   async generateImage(options: ImageGenerationOptions): Promise<string> {
-    const response = await fetch(`${this.baseUrl}/images/generations`, {
+    const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
@@ -37,12 +44,13 @@ export class OpenRouterClient {
       },
       body: JSON.stringify({
         model: options.model,
-        prompt: options.prompt,
-        n: 1,
-        size: `${options.width || 512}x${options.height || 512}`,
-        response_format: "url",
-        ...(options.steps && { steps: options.steps }),
-        ...(options.guidance_scale && { guidance_scale: options.guidance_scale }),
+        messages: [
+          {
+            role: "user",
+            content: options.prompt,
+          },
+        ],
+        modalities: ["image", "text"],
       }),
     })
 
@@ -57,11 +65,18 @@ export class OpenRouterClient {
       throw new Error(`OpenRouter error: ${data.error.message}`)
     }
 
-    if (!data.data?.[0]?.url) {
-      throw new Error("No image URL returned from OpenRouter")
+    // Extract image from response
+    const images = data.choices?.[0]?.message?.images
+    if (!images || images.length === 0) {
+      throw new Error("No image returned from OpenRouter")
     }
 
-    return data.data[0].url
+    const imageUrl = images[0].image_url?.url || images[0].url
+    if (!imageUrl) {
+      throw new Error("No image URL in OpenRouter response")
+    }
+
+    return imageUrl
   }
 
   async getAvailableModels(): Promise<Array<{ id: string; name: string; pricing?: any }>> {
@@ -76,13 +91,14 @@ export class OpenRouterClient {
     }
 
     const data = await response.json()
+
     return (
       data.data?.filter(
         (model: any) =>
+          model.architecture?.output_modalities?.includes("image") ||
           model.id.includes("flux") ||
           model.id.includes("dall-e") ||
-          model.id.includes("midjourney") ||
-          model.id.includes("stable-diffusion"),
+          (model.id.includes("gemini") && model.id.includes("image")),
       ) || []
     )
   }

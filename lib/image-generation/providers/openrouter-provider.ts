@@ -16,7 +16,7 @@ export class OpenRouterImageProvider extends BaseImageProvider {
   constructor(apiKey?: string, model?: string) {
     super()
     this.apiKey = apiKey || process.env.OPENROUTER_API_KEY
-    this.model = model || process.env.OPENROUTER_IMAGE_MODEL || "black-forest-labs/flux-1.1-pro"
+    this.model = model || process.env.OPENROUTER_IMAGE_MODEL || "google/gemini-2.5-flash-image-preview"
     this.s3Uploader = new S3Uploader()
   }
 
@@ -27,19 +27,11 @@ export class OpenRouterImageProvider extends BaseImageProvider {
 
     const { prompt, seedImageUrl, width = 512, height = 512, quality = "standard" } = options
 
-    console.log("[OpenRouterImageProvider] Generating image with prompt:", prompt)
+    console.log("[OpenRouterImageProvider] Generating image with model:", this.model)
+    console.log("[OpenRouterImageProvider] Prompt:", prompt)
 
     try {
-      let seedBytes: Buffer | undefined
-      let dataUrl: string | undefined
-
-      if (seedImageUrl) {
-        seedBytes = await this.loadSeedBytes(seedImageUrl)
-        const contentType = "image/png"
-        dataUrl = `data:${contentType};base64,${seedBytes.toString("base64")}`
-      }
-
-      const result = await this.generateFromSeedUrl(seedImageUrl || "", prompt, quality)
+      const result = await this.generateFromPrompt(seedImageUrl, prompt, quality)
 
       return {
         buffer: result.content,
@@ -77,7 +69,6 @@ export class OpenRouterImageProvider extends BaseImageProvider {
 
     if (process.env.AWS_S3_BUCKET && !seedRef.startsWith("http")) {
       const s3Key = seedRef
-      // Download from S3
       const AWS = await import("aws-sdk")
       const s3 = new AWS.S3({
         accessKeyId: process.env.AWS_ACCESS_KEY_ID,
@@ -98,8 +89,8 @@ export class OpenRouterImageProvider extends BaseImageProvider {
     throw new Error(`Unsupported seed image reference: ${seedRef}`)
   }
 
-  private async generateFromSeedUrl(
-    seedImageUrl: string,
+  private async generateFromPrompt(
+    seedImageUrl: string | undefined,
     prompt: string,
     style = "professional",
   ): Promise<GenerationResultData> {
@@ -107,147 +98,107 @@ export class OpenRouterImageProvider extends BaseImageProvider {
       throw new Error("OPENROUTER_API_KEY is required")
     }
 
-    let dataUrl: string | undefined
+    console.log("[v0] Building OpenRouter request...")
+
+    // Build message content according to OpenRouter docs
+    let messageContent: any
 
     if (seedImageUrl) {
+      // Image + text → image (image-conditioned generation)
+      console.log("[v0] Loading seed image for conditioning...")
       const seedBytes = await this.loadSeedBytes(seedImageUrl)
-      const contentType = "image/png"
-      dataUrl = `data:${contentType};base64,${seedBytes.toString("base64")}`
+      const dataUrl = `data:image/png;base64,${seedBytes.toString("base64")}`
+
+      // Text first, then image (as recommended by docs)
+      messageContent = [
+        { type: "text", text: prompt },
+        { type: "image_url", image_url: { url: dataUrl } },
+      ]
+    } else {
+      // Text → image (simple generation)
+      messageContent = prompt
     }
 
-    const payloadPrimary: any = {
+    const payload = {
       model: this.model,
       messages: [
         {
           role: "user",
-          content: dataUrl
-            ? [
-                { type: "text", text: prompt },
-                { type: "image_url", image_url: { url: dataUrl } },
-              ]
-            : prompt,
+          content: messageContent,
         },
       ],
+      modalities: ["image", "text"], // Required for image generation
     }
 
-    try {
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": process.env.OPENROUTER_SITE_URL || "http://localhost:3000",
-          "X-Title": process.env.OPENROUTER_APP_TITLE || "ClientSynth",
-        },
-        body: JSON.stringify(payloadPrimary),
-      })
+    console.log("[v0] Sending request to OpenRouter...")
+    console.log("[v0] Model:", this.model)
+    console.log("[v0] Has seed image:", !!seedImageUrl)
 
-      if (!response.ok) {
-        throw new Error(`OpenRouter API error: ${response.status} ${response.statusText}`)
-      }
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": process.env.OPENROUTER_SITE_URL || "http://localhost:3000",
+        "X-Title": process.env.OPENROUTER_APP_TITLE || "ClientSynth",
+      },
+      body: JSON.stringify(payload),
+    })
 
-      const data = await response.json()
-      const { outBytes, outType } = await this.extractImageFromResponse(data)
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error("[v0] OpenRouter API error response:", errorText)
+      throw new Error(`OpenRouter API error: ${response.status} ${response.statusText} - ${errorText}`)
+    }
 
-      return {
-        content: outBytes,
-        contentType: outType,
-        width: 512,
-        height: 512,
-      }
-    } catch (error) {
-      console.error("[OpenRouterImageProvider] Primary attempt failed:", error)
+    const data = await response.json()
+    console.log("[v0] Received response from OpenRouter")
 
-      const payloadAlt: any = {
-        model: this.model,
-        messages: [
-          {
-            role: "user",
-            content: dataUrl
-              ? [
-                  { type: "input_text", text: prompt },
-                  { type: "input_image", image_url: { url: dataUrl } },
-                ]
-              : prompt,
-          },
-        ],
-        modalities: ["image", "text"],
-      }
+    const { outBytes, outType } = await this.extractImageFromResponse(data)
 
-      const response2 = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": process.env.OPENROUTER_SITE_URL || "http://localhost:3000",
-          "X-Title": process.env.OPENROUTER_APP_TITLE || "ClientSynth",
-        },
-        body: JSON.stringify(payloadAlt),
-      })
+    console.log("[v0] Successfully extracted image, size:", outBytes.length, "bytes")
 
-      if (!response2.ok) {
-        throw new Error(`OpenRouter API error (alternate): ${response2.status} ${response2.statusText}`)
-      }
-
-      const data2 = await response2.json()
-      const { outBytes, outType } = await this.extractImageFromResponse(data2)
-
-      return {
-        content: outBytes,
-        contentType: outType,
-        width: 512,
-        height: 512,
-      }
+    return {
+      content: outBytes,
+      contentType: outType,
+      width: 1024, // Gemini 2.5 Flash Image default
+      height: 1024,
     }
   }
 
   private async extractImageFromResponse(data: any): Promise<{ outBytes: Buffer; outType: string }> {
-    const choice = (data.choices || [{}])[0]
-    const message = choice.message || {}
-    const content = message.content
+    console.log("[v0] Extracting image from response...")
 
-    if (Array.isArray(content)) {
-      for (const part of content) {
-        if (typeof part === "object" && part.type in ["output_image", "image", "image_url"]) {
-          const imgUrl = typeof part.image_url === "object" ? part.image_url.url : part.image_url
-
-          if (imgUrl) {
-            if (imgUrl.startsWith("data:")) {
-              const [header, b64] = imgUrl.split(",", 1)
-              const contentType = header.split(";")[0].split(":")[1]
-              return {
-                outBytes: Buffer.from(b64, "base64"),
-                outType: contentType,
-              }
-            }
-
-            const r2 = await fetch(imgUrl)
-            if (!r2.ok) {
-              throw new Error(`Failed to fetch image URL: ${r2.statusText}`)
-            }
-            const arrayBuffer = await r2.arrayBuffer()
-            return {
-              outBytes: Buffer.from(arrayBuffer),
-              outType: r2.headers.get("content-type") || "image/png",
-            }
-          }
-        }
-      }
+    const choice = data.choices?.[0]
+    if (!choice) {
+      throw new Error("No choices in OpenRouter response")
     }
 
+    const message = choice.message
+    if (!message) {
+      throw new Error("No message in OpenRouter response")
+    }
+
+    // Check for images array (primary format according to docs)
     const images = message.images || []
     if (images.length > 0) {
-      const imgUrl = images[0].image_url?.url
+      console.log("[v0] Found images array with", images.length, "image(s)")
+      const imgUrl = images[0].image_url?.url || images[0].url
+
       if (imgUrl) {
         if (imgUrl.startsWith("data:")) {
-          const [header, b64] = imgUrl.split(",", 1)
-          const contentType = header.split(";")[0].split(":")[1]
+          // Base64 data URL
+          const [header, b64] = imgUrl.split(",", 2)
+          const contentType = header.match(/data:([^;]+)/)?.[1] || "image/png"
+          console.log("[v0] Decoding base64 image, type:", contentType)
           return {
             outBytes: Buffer.from(b64, "base64"),
             outType: contentType,
           }
         }
 
+        // External URL
+        console.log("[v0] Fetching image from URL:", imgUrl.substring(0, 50) + "...")
         const r2 = await fetch(imgUrl)
         if (!r2.ok) {
           throw new Error(`Failed to fetch image URL: ${r2.statusText}`)
@@ -260,11 +211,36 @@ export class OpenRouterImageProvider extends BaseImageProvider {
       }
     }
 
+    // Fallback: check content array
+    const content = message.content
+    if (Array.isArray(content)) {
+      console.log("[v0] Checking content array...")
+      for (const part of content) {
+        if (typeof part === "object" && part.type === "image_url") {
+          const imgUrl = part.image_url?.url
+          if (imgUrl && imgUrl.startsWith("data:")) {
+            const [header, b64] = imgUrl.split(",", 2)
+            const contentType = header.match(/data:([^;]+)/)?.[1] || "image/png"
+            return {
+              outBytes: Buffer.from(b64, "base64"),
+              outType: contentType,
+            }
+          }
+        }
+      }
+    }
+
+    console.error("[v0] Response structure:", JSON.stringify(data, null, 2))
     throw new Error("No images returned from OpenRouter response")
   }
 
   getSupportedModels(): string[] {
-    return ["black-forest-labs/flux-1.1-pro", "openai/dall-e-3", "stability-ai/stable-diffusion-xl"]
+    return [
+      "google/gemini-2.5-flash-image-preview",
+      "black-forest-labs/flux-1.1-pro",
+      "openai/dall-e-3",
+      "stability-ai/stable-diffusion-xl",
+    ]
   }
 
   validateConfig(): boolean {

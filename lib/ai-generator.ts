@@ -7,6 +7,13 @@ export interface GenerationContext {
   tenantContext?: string
 }
 
+interface StructuredOutputSchema {
+  type: "object"
+  properties: Record<string, any>
+  required: string[]
+  additionalProperties: boolean
+}
+
 export class AIGenerator {
   private apiKey: string | undefined
   private model = "google/gemini-2.5-flash"
@@ -51,38 +58,62 @@ export class AIGenerator {
           { role: "system", content: system },
           { role: "user", content: prompt },
         ],
-        max_tokens: 100,
-        temperature: 0.6,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "field_value",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                value: { type: "string" },
+              },
+              required: ["value"],
+              additionalProperties: false,
+            },
+          },
+        },
+        max_tokens: 150,
+        temperature: 0.7,
       }),
     })
 
     if (!response.ok) {
       const errorText = await response.text()
+      console.error(`[AIGenerator] OpenRouter API error: ${response.status} ${response.statusText}`, errorText)
       throw new Error(`OpenRouter API error: ${response.status} ${response.statusText} - ${errorText}`)
     }
 
     const data = await response.json()
 
     if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+      console.error("[AIGenerator] Invalid response structure:", JSON.stringify(data, null, 2))
       throw new Error("Invalid response from OpenRouter API: missing choices or message")
     }
 
     const content = data.choices[0].message.content.trim()
-
-    console.log(`[AIGenerator] Generated: ${content}`)
-    return content
+    try {
+      const parsed = JSON.parse(content)
+      const value = parsed.value || content
+      console.log(`[AIGenerator] Generated: ${value}`)
+      return value
+    } catch (e) {
+      // Fallback if not JSON
+      console.log(`[AIGenerator] Generated (non-JSON): ${content}`)
+      return content
+    }
   }
 
   private systemPromptFor(context: GenerationContext): string {
     const ft = context.fieldType
     const prompts: Record<string, string> = {
-      name: "Generate realistic human names.",
-      email: "Generate realistic email addresses.",
-      company: "Generate realistic company names.",
-      text: "Generate short, realistic text snippet.",
-      description: "Generate concise descriptive text.",
+      name: "Generate realistic human names. Return only the name value in JSON format.",
+      email: "Generate realistic email addresses. Return only the email value in JSON format.",
+      company: "Generate realistic company names. Return only the company name in JSON format.",
+      text: "Generate short, realistic text snippet. Return only the text value in JSON format.",
+      description: "Generate concise descriptive text. Return only the description in JSON format.",
     }
-    return prompts[ft] || "Generate realistic data."
+    return prompts[ft] || "Generate realistic data. Return only the value in JSON format."
   }
 
   private buildPrompt(context: GenerationContext): string {
@@ -103,7 +134,7 @@ export class AIGenerator {
       }
     }
 
-    parts.push("Return only the value.")
+    parts.push('Return a JSON object with a "value" field containing only the generated value.')
     return parts.join("\n")
   }
 
