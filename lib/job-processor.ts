@@ -73,10 +73,17 @@ export class JobProcessor {
       console.log("[v0] Environment variables check:", {
         hasSupabaseUrl: !!supabaseUrl,
         hasServiceRoleKey: !!serviceRoleKey,
+        hasOpenRouterKey: !!process.env.OPENROUTER_API_KEY,
+        hasAwsAccessKey: !!process.env.AWS_ACCESS_KEY_ID,
+        hasAwsSecretKey: !!process.env.AWS_SECRET_ACCESS_KEY,
+        hasAwsBucket: !!process.env.AWS_S3_BUCKET,
+        hasAwsRegion: !!process.env.AWS_REGION,
       })
 
       if (!supabaseUrl || !serviceRoleKey) {
-        throw new Error("Missing required Supabase environment variables")
+        throw new Error(
+          "Missing required Supabase environment variables: NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY",
+        )
       }
 
       console.log("[v0] Creating Supabase client with service role...")
@@ -91,6 +98,15 @@ export class JobProcessor {
         throw new Error("OPENROUTER_API_KEY environment variable is required for AI generation")
       }
 
+      if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY || !process.env.AWS_S3_BUCKET) {
+        console.warn("[v0] AWS credentials not fully configured. Image upload may fail.")
+        console.warn("[v0] Missing:", {
+          accessKey: !process.env.AWS_ACCESS_KEY_ID,
+          secretKey: !process.env.AWS_SECRET_ACCESS_KEY,
+          bucket: !process.env.AWS_S3_BUCKET,
+        })
+      }
+
       console.log("[v0] Initializing AI generator...")
       this.aiGenerator = new AIGenerator()
 
@@ -100,12 +116,14 @@ export class JobProcessor {
       console.log("[v0] JobProcessor initialized successfully")
     } catch (error) {
       console.error("[v0] Failed to initialize JobProcessor:", error)
-      throw new Error(`JobProcessor initialization failed: ${error instanceof Error ? error.message : "Unknown error"}`)
+      const errorMessage = error instanceof Error ? error.message : "Unknown error"
+      throw new Error(
+        `JobProcessor initialization failed: ${errorMessage}. Check environment variables and Supabase connection.`,
+      )
     }
   }
 
   private setupJobControlListener(): void {
-    // Listen for job control signals via Supabase real-time
     this.supabase
       .channel("job-controls")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "job_controls" }, (payload) => {
@@ -214,7 +232,6 @@ export class JobProcessor {
       try {
         const record = await this.generateSingleRecord(fields, recordIndex, this.currentJob)
 
-        // Save the retried record
         await this.supabase.from("generated_data").insert({
           job_id: this.currentJob.job_id,
           tenant_id: this.currentJob.tenant_id,
@@ -223,7 +240,6 @@ export class JobProcessor {
           created_at: new Date().toISOString(),
         })
 
-        // Remove from failed records list
         recoveryState.failedRecords = recoveryState.failedRecords.filter((i) => i !== recordIndex)
 
         await this.logJobMessage(this.currentJob.job_id, "info", `Successfully retried record ${recordIndex}`)
@@ -249,7 +265,6 @@ export class JobProcessor {
       }
     }
 
-    // Update recovery state
     await this.supabase.from("jobs").update({ recovery_state: recoveryState }).eq("id", this.currentJob.job_id)
   }
 
@@ -516,7 +531,6 @@ export class JobProcessor {
       try {
         const record = await this.generateSingleRecord(fields, recordIndex, job)
 
-        // Clear retry count on success
         if (recoveryState.retryAttempts[retryKey]) {
           delete recoveryState.retryAttempts[retryKey]
         }
@@ -556,7 +570,6 @@ export class JobProcessor {
 
     console.log(`[v0] Processing ${textFields.length} text fields and ${imageFields.length} image fields`)
 
-    // Generate text fields first
     for (const field of textFields) {
       console.log(`[v0] Generating field: ${field.name} (type: ${field.type})`)
 
@@ -580,7 +593,6 @@ export class JobProcessor {
       }
     }
 
-    // Generate image fields last (with context from text fields)
     if (job.config.enable_images !== false && imageFields.length > 0) {
       console.log(`[v0] Generating ${imageFields.length} image fields with context:`, record)
 

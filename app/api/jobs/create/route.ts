@@ -73,7 +73,6 @@ export async function POST(request: NextRequest) {
       const processor = new JobProcessor()
       console.log("[v0] Job processor initialized, starting processing...")
 
-      // Process job asynchronously without blocking the response
       processor
         .processNextJob()
         .then(() => {
@@ -81,21 +80,40 @@ export async function POST(request: NextRequest) {
         })
         .catch((error) => {
           console.error("[v0] Background job processing failed:", error)
+          supabase
+            .from("jobs")
+            .update({
+              status: "failed",
+              error_message: `Job processing failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+              completed_at: new Date().toISOString(),
+            })
+            .eq("id", job.id)
+            .then(() => console.log("[v0] Job status updated to failed"))
+            .catch((updateError) => console.error("[v0] Failed to update job status:", updateError))
         })
 
       console.log("[v0] Job processing started in background")
     } catch (processError) {
       console.error("[v0] Error initializing or starting job processing:", processError)
-      // Update job status to failed if processor initialization fails
       await supabase
         .from("jobs")
         .update({
           status: "failed",
           error_message: `Job processor initialization failed: ${processError instanceof Error ? processError.message : "Unknown error"}`,
+          completed_at: new Date().toISOString(),
         })
         .eq("id", job.id)
 
       console.error("[v0] Job created but processing failed to start:", processError)
+
+      return NextResponse.json(
+        {
+          error: "Job created but processing failed to start",
+          details: processError instanceof Error ? processError.message : "Unknown error",
+          jobId: job.id,
+        },
+        { status: 500 },
+      )
     }
 
     console.log("[v0] Returning success response")

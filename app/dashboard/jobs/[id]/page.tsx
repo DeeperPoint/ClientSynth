@@ -273,6 +273,17 @@ export default function JobDetailPage() {
       console.log("[v0] Job loaded successfully:", data)
       setJob(data)
 
+      if (data.status === "pending") {
+        const createdAt = new Date(data.created_at)
+        const now = new Date()
+        const minutesElapsed = (now.getTime() - createdAt.getTime()) / 1000 / 60
+
+        if (minutesElapsed > 2) {
+          console.warn("[v0] Job has been pending for", minutesElapsed, "minutes")
+          console.warn("[v0] This may indicate a job processor initialization issue")
+        }
+      }
+
       await Promise.all([loadLogs(), loadSampleData()])
     } catch (error) {
       console.error("Error loading job details:", error)
@@ -731,6 +742,40 @@ export default function JobDetailPage() {
           </Card>
         </div>
       </div>
+
+      {job.status === "pending" && (
+        <div className="bg-chart-4/5 border border-chart-4/20 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Clock className="h-4 w-4 text-chart-4" />
+            <span className="text-sm font-medium text-chart-4">Job Pending</span>
+          </div>
+          <p className="text-sm text-foreground">
+            This job is waiting to be processed. If it remains pending for more than a few minutes, there may be an
+            issue with the job processor.
+          </p>
+          <Button
+            onClick={async () => {
+              try {
+                const response = await fetch("/api/jobs/process", { method: "POST" })
+                const result = await response.json()
+                if (result.success) {
+                  await loadJobDetails()
+                } else {
+                  alert(`Failed to trigger job processing: ${result.error}`)
+                }
+              } catch (error) {
+                alert("Failed to trigger job processing")
+              }
+            }}
+            size="sm"
+            variant="outline"
+            className="mt-3"
+          >
+            <Play className="mr-2 h-4 w-4" />
+            Manually Trigger Processing
+          </Button>
+        </div>
+      )}
     </div>
   )
 }
