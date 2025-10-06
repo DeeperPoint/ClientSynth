@@ -22,6 +22,7 @@ import {
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import { formatDistanceToNow } from "date-fns"
+import { useToast } from "@/hooks/use-toast"
 
 interface Job {
   id: string
@@ -84,6 +85,8 @@ export default function JobDetailPage() {
   const [isLiveMode, setIsLiveMode] = useState(true)
   const previousProgress = useRef<{ records: number; time: Date } | null>(null)
   const logsEndRef = useRef<HTMLDivElement>(null)
+  const { toast } = useToast()
+  const [isTriggering, setIsTriggering] = useState(false)
 
   const params = useParams()
   const supabase = createClient()
@@ -354,6 +357,52 @@ export default function JobDetailPage() {
     } catch (error) {
       console.error("Error retrying job:", error)
       alert("Failed to retry job")
+    }
+  }
+
+  const triggerJobProcessing = async () => {
+    if (!job) return
+
+    setIsTriggering(true)
+    try {
+      console.log("[v0] Manually triggering job processing for job:", job.id)
+
+      const response = await fetch("/api/jobs/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      })
+
+      const result = await response.json()
+      console.log("[v0] Trigger result:", result)
+
+      if (result.success) {
+        toast({
+          title: "Processing Started",
+          description: result.processed
+            ? "Job processing has been initiated successfully"
+            : "No pending jobs found to process",
+        })
+
+        // Refresh job details after a short delay
+        setTimeout(() => {
+          loadJobDetails()
+        }, 2000)
+      } else {
+        toast({
+          title: "Processing Failed",
+          description: result.error || "Failed to start job processing",
+          variant: "destructive",
+        })
+      }
+    } catch (error) {
+      console.error("[v0] Error triggering job processing:", error)
+      toast({
+        title: "Error",
+        description: "Failed to trigger job processing. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsTriggering(false)
     }
   }
 
@@ -744,36 +793,42 @@ export default function JobDetailPage() {
       </div>
 
       {job.status === "pending" && (
-        <div className="bg-chart-4/5 border border-chart-4/20 rounded-xl p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Clock className="h-4 w-4 text-chart-4" />
-            <span className="text-sm font-medium text-chart-4">Job Pending</span>
+        <div className="mt-6 bg-chart-4/10 border border-chart-4/20 rounded-xl p-6">
+          <div className="flex items-start gap-4">
+            <div className="flex-shrink-0">
+              <Clock className="h-6 w-6 text-chart-4" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold text-chart-4 mb-2">Job Pending</h3>
+              <p className="text-sm text-foreground mb-4">
+                This job is waiting to be processed. In serverless environments, background processing may not start
+                automatically. Click the button below to manually start processing.
+              </p>
+              <div className="flex items-center gap-3">
+                <Button
+                  onClick={triggerJobProcessing}
+                  disabled={isTriggering}
+                  className="bg-chart-4 hover:bg-chart-4/90 text-white"
+                >
+                  {isTriggering ? (
+                    <>
+                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      Starting...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="mr-2 h-4 w-4" />
+                      Start Processing Now
+                    </>
+                  )}
+                </Button>
+                <Button onClick={refreshData} variant="outline" size="sm" disabled={isRefreshing}>
+                  <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
+                  Refresh Status
+                </Button>
+              </div>
+            </div>
           </div>
-          <p className="text-sm text-foreground">
-            This job is waiting to be processed. If it remains pending for more than a few minutes, there may be an
-            issue with the job processor.
-          </p>
-          <Button
-            onClick={async () => {
-              try {
-                const response = await fetch("/api/jobs/process", { method: "POST" })
-                const result = await response.json()
-                if (result.success) {
-                  await loadJobDetails()
-                } else {
-                  alert(`Failed to trigger job processing: ${result.error}`)
-                }
-              } catch (error) {
-                alert("Failed to trigger job processing")
-              }
-            }}
-            size="sm"
-            variant="outline"
-            className="mt-3"
-          >
-            <Play className="mr-2 h-4 w-4" />
-            Manually Trigger Processing
-          </Button>
         </div>
       )}
     </div>

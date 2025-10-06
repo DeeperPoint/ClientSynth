@@ -1,9 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { JobProcessor } from "@/lib/job-processor"
 
+export const maxDuration = 60
+
 export async function POST(request: NextRequest) {
   try {
-    console.log("[v0] Manual job processing endpoint called")
+    console.log("[v0] Job processing endpoint called")
 
     console.log("[v0] Initializing JobProcessor...")
     const processor = new JobProcessor()
@@ -29,4 +31,8 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     )
   }
+}
+
+export async function GET(request: NextRequest) {
+  return POST(request)
 }

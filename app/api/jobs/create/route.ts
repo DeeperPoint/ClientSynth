@@ -1,6 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { JobProcessor } from "@/lib/job-processor"
 
 export async function POST(request: NextRequest) {
   console.log("[v0] Job creation API called")
@@ -33,7 +32,6 @@ export async function POST(request: NextRequest) {
     }
 
     console.log("[v0] Fetching schema:", schema_id)
-    // Get schema to validate and get tenant_id
     const { data: schema, error: schemaError } = await supabase
       .from("schemas")
       .select("id, tenant_id, name, schema_definition")
@@ -47,7 +45,6 @@ export async function POST(request: NextRequest) {
     console.log("[v0] Schema found:", schema.name)
 
     console.log("[v0] Creating job record...")
-    // Create job
     const { data: job, error: jobError } = await supabase
       .from("jobs")
       .insert({
@@ -68,52 +65,27 @@ export async function POST(request: NextRequest) {
     }
     console.log("[v0] Job created successfully:", job.id)
 
-    console.log("[v0] Initializing job processor...")
+    console.log("[v0] Triggering job processing via API...")
     try {
-      const processor = new JobProcessor()
-      console.log("[v0] Job processor initialized, starting processing...")
+      // Use fetch to call the processing endpoint
+      // This ensures it runs independently of this request's lifecycle
+      const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_URL || "http://localhost:3000"
+      const processUrl = `${baseUrl.startsWith("http") ? baseUrl : `https://${baseUrl}`}/api/jobs/process`
 
-      processor
-        .processNextJob()
-        .then(() => {
-          console.log("[v0] Job processing completed successfully")
-        })
-        .catch((error) => {
-          console.error("[v0] Background job processing failed:", error)
-          supabase
-            .from("jobs")
-            .update({
-              status: "failed",
-              error_message: `Job processing failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-              completed_at: new Date().toISOString(),
-            })
-            .eq("id", job.id)
-            .then(() => console.log("[v0] Job status updated to failed"))
-            .catch((updateError) => console.error("[v0] Failed to update job status:", updateError))
-        })
+      console.log("[v0] Calling process endpoint:", processUrl)
 
-      console.log("[v0] Job processing started in background")
-    } catch (processError) {
-      console.error("[v0] Error initializing or starting job processing:", processError)
-      await supabase
-        .from("jobs")
-        .update({
-          status: "failed",
-          error_message: `Job processor initialization failed: ${processError instanceof Error ? processError.message : "Unknown error"}`,
-          completed_at: new Date().toISOString(),
-        })
-        .eq("id", job.id)
+      // Fire and forget - don't await this
+      fetch(processUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      }).catch((error) => {
+        console.error("[v0] Failed to trigger job processing:", error)
+      })
 
-      console.error("[v0] Job created but processing failed to start:", processError)
-
-      return NextResponse.json(
-        {
-          error: "Job created but processing failed to start",
-          details: processError instanceof Error ? processError.message : "Unknown error",
-          jobId: job.id,
-        },
-        { status: 500 },
-      )
+      console.log("[v0] Job processing trigger sent")
+    } catch (triggerError) {
+      console.error("[v0] Error triggering job processing:", triggerError)
+      // Don't fail the job creation if trigger fails - user can manually trigger
     }
 
     console.log("[v0] Returning success response")

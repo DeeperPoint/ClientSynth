@@ -353,13 +353,18 @@ export class JobProcessor {
       this.aiGenerator.setModel(textModel)
 
       console.log("[v0] Updating job status to processing...")
-      await this.supabase
+      const { error: updateError } = await this.supabase
         .from("jobs")
         .update({
           status: "processing",
           started_at: new Date().toISOString(),
         })
         .eq("id", job.job_id)
+
+      if (updateError) {
+        console.error("[v0] Failed to update job status:", updateError)
+        throw new Error(`Failed to update job status: ${updateError.message}`)
+      }
 
       await this.logJobMessage(job.job_id, "info", `Started processing job: ${job.name}`, {
         textModel,
