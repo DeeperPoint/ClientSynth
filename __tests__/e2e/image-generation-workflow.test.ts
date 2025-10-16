@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js"
+import { createServerClient } from "@/lib/supabase/server"
 
 describe("Image Generation Workflow E2E Tests", () => {
   let supabase: any
@@ -6,7 +6,7 @@ describe("Image Generation Workflow E2E Tests", () => {
   let testJobId: string
 
   beforeAll(async () => {
-    supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
+    supabase = await createServerClient()
 
     // Create test tenant
     const { data: tenant } = await supabase.from("tenants").insert({ name: "Image Test Tenant" }).select().single()
@@ -19,7 +19,7 @@ describe("Image Generation Workflow E2E Tests", () => {
         tenant_id: testTenantId,
         name: "Image Test Job",
         total_records: 10,
-        status: "processing",
+        status: "running",
       })
       .select()
       .single()

@@ -1,4 +1,4 @@
-import { GoogleFlashImageProvider } from "@/lib/image-generation/providers/google-flash"
+import { GoogleFlashImageProvider } from "@/lib/image-generation/providers/google-flash-provider"
 
 describe("GoogleFlashImageProvider Integration Tests", () => {
   let provider: GoogleFlashImageProvider

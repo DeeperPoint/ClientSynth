@@ -1,13 +1,7 @@
 import { ImageGenerationService } from "@/lib/image-generation/image-service"
-import { createClient } from "@supabase/supabase-js"
 
 describe("ImageGenerationService Integration Tests", () => {
   let service: ImageGenerationService
-  let supabase: any
-
-  beforeAll(() => {
-    supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
-  })
 
   beforeEach(() => {
     service = new ImageGenerationService()

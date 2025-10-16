@@ -1,13 +1,7 @@
-import { BatchImageGenerator } from "@/lib/image-generation/batch-generator"
-import { createClient } from "@supabase/supabase-js"
+import { BatchImageGenerator } from "@/lib/batch-image-generator"
 
 describe("BatchImageGenerator Integration Tests", () => {
   let generator: BatchImageGenerator
-  let supabase: any
-
-  beforeAll(() => {
-    supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
-  })
 
   beforeEach(() => {
     generator = new BatchImageGenerator()

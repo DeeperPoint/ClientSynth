@@ -1,5 +1,5 @@
 import { JobProcessor } from "@/lib/job-processor"
-import { createClient } from "@supabase/supabase-js"
+import { createServerClient } from "@/lib/supabase/server"
 
 describe("JobProcessor Integration Tests", () => {
   let processor: JobProcessor
@@ -8,7 +8,7 @@ describe("JobProcessor Integration Tests", () => {
   let testSchemaId: string
 
   beforeAll(async () => {
-    supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
+    supabase = await createServerClient()
 
     // Create test tenant
     const { data: tenant } = await supabase.from("tenants").insert({ name: "Test Tenant" }).select().single()

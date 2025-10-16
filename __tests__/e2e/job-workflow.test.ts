@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js"
+import { createServerClient } from "@/lib/supabase/server"
 
 describe("End-to-End Job Workflow Tests", () => {
   let supabase: any
@@ -7,15 +7,15 @@ describe("End-to-End Job Workflow Tests", () => {
   let testSchemaId: string
 
   beforeAll(async () => {
-    supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
+    supabase = await createServerClient()
 
-    // Create test user
-    const { data: authData } = await supabase.auth.admin.createUser({
-      email: "test@example.com",
-      password: "testpassword123",
-      email_confirm: true,
-    })
-    testUserId = authData.user.id
+    // Create test user row in auth.users via SQL helper or direct insert
+    const { data: userRow } = await supabase
+      .from("auth.users")
+      .insert({ email: "test@example.com", password_hash: "testpassword123", email_verified: true })
+      .select()
+      .single()
+    testUserId = userRow.id
 
     // Create test tenant
     const { data: tenant } = await supabase.from("tenants").insert({ name: "E2E Test Tenant" }).select().single()
@@ -126,7 +126,7 @@ describe("End-to-End Job Workflow Tests", () => {
       await new Promise((resolve) => setTimeout(resolve, 5000))
 
       let jobStatus = await supabase.from("jobs").select("*").eq("id", job.id).single()
-      expect(["processing", "completed"]).toContain(jobStatus.data.status)
+      expect(["running", "processing", "completed"]).toContain(jobStatus.data.status)
 
       console.log(`[E2E] Job status: ${jobStatus.data.status}`)
 
