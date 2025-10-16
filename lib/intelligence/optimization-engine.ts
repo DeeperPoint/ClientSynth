@@ -1,5 +1,4 @@
-import { createServerClient } from "@supabase/ssr"
-import { cookies } from "next/headers"
+import { createServerClient } from "@/lib/supabase/server"
 import { PatternDetector } from "../variation/pattern-detector"
 import { DistributionManager } from "../variation/distribution-manager"
 
@@ -28,13 +27,7 @@ export class OptimizationEngine {
   private distributionManager: DistributionManager
 
   constructor() {
-    this.supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      cookies: {
-        get: (name: string) => cookies().get(name)?.value,
-        set: () => {},
-        remove: () => {},
-      },
-    })
+    this.supabase = createServerClient()
     this.patternDetector = new PatternDetector()
     this.distributionManager = new DistributionManager()
   }

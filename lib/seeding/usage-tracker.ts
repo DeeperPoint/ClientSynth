@@ -1,5 +1,4 @@
-import { createServerClient } from "@supabase/ssr"
-import { cookies } from "next/headers"
+import { createServerClient } from "@/lib/supabase/server"
 
 export interface GenerationPattern {
   id: string
@@ -13,13 +12,7 @@ export class UsageTracker {
   private supabase
 
   constructor() {
-    this.supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      cookies: {
-        get: (name: string) => cookies().get(name)?.value,
-        set: () => {},
-        remove: () => {},
-      },
-    })
+    this.supabase = createServerClient()
   }
 
   async recordGenerationPattern(jobId: string, patternData: Record<string, any>): Promise<void> {

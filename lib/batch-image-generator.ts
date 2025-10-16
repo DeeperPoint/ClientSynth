@@ -32,9 +32,79 @@ export interface BatchImageResult {
  */
 export class BatchImageGenerator {
   private imageService: ImageGenerationService
+  private listeners: { [event: string]: Array<(data: any) => void> } = {}
 
   constructor() {
     this.imageService = new ImageGenerationService()
+  }
+
+  on(event: 'progress', listener: (data: { total: number; completed: number }) => void) {
+    if (!this.listeners[event]) this.listeners[event] = []
+    this.listeners[event].push(listener)
+  }
+
+  private emit(event: string, data: any) {
+    const fns = this.listeners[event] || []
+    for (const fn of fns) fn(data)
+  }
+
+  async generateForRecords(args: {
+    tenantId: string
+    jobId: string
+    records: Array<Record<string, any> & { id: string }>
+    fieldName: string
+    fieldDescription?: string
+    provider?: 'fal' | 'google-flash' | 'placeholder'
+    model?: string
+    batchSize?: number
+    continueOnError?: boolean
+  }) {
+    const {
+      tenantId,
+      jobId,
+      records,
+      fieldName,
+      provider = 'google-flash',
+      model,
+      batchSize = 5,
+      continueOnError = false,
+    } = args
+
+    const total = records.length
+    let completed = 0
+    const results: Array<{ success: boolean; url?: string; s3Key?: string; error?: string }> = []
+
+    for (let i = 0; i < records.length; i += batchSize) {
+      const batch = records.slice(i, i + batchSize)
+      const settled = await Promise.allSettled(
+        batch.map((rec) =>
+          this.imageService
+            .generateAndUploadImage({
+              tenantId,
+              jobId,
+              recordId: rec.id,
+              fieldName,
+              prompt: args.fieldDescription || 'professional photo',
+              provider,
+              model: (model as any) || 'gemini-2.0-flash-exp',
+            })
+            .then((r) => ({ success: true, url: r.url, s3Key: r.s3Key }))
+        )
+      )
+
+      for (const s of settled) {
+        completed++
+        if (s.status === 'fulfilled') {
+          results.push(s.value)
+        } else {
+          results.push({ success: false, error: s.reason?.message || 'failed' })
+          if (!continueOnError) throw s.reason
+        }
+        this.emit('progress', { total, completed })
+      }
+    }
+
+    return results
   }
 
   async generate(options: BatchImageGenerationOptions): Promise<BatchImageResult[]> {

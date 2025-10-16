@@ -1,5 +1,4 @@
-import { createServerClient } from "@supabase/ssr"
-import { cookies } from "next/headers"
+import { createServerClient } from "@/lib/supabase/server"
 import { SeedDatabase, type Seed } from "../seeding/seed-database"
 
 export interface QualityPrediction {
@@ -28,13 +27,7 @@ export class SeedQualityPredictor {
   private seedDb: SeedDatabase
 
   constructor() {
-    this.supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      cookies: {
-        get: (name: string) => cookies().get(name)?.value,
-        set: () => {},
-        remove: () => {},
-      },
-    })
+    this.supabase = createServerClient()
     this.seedDb = new SeedDatabase()
   }
 

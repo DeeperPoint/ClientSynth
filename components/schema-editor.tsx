@@ -1,7 +1,6 @@
 "use client"
 
 import { useState } from "react"
-import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -36,7 +35,7 @@ export function SchemaEditor({ schema }: SchemaEditorProps) {
   const [fields, setFields] = useState<SchemaField[]>(schema.schema_definition?.fields || [])
   const [isSaving, setIsSaving] = useState(false)
   const router = useRouter()
-  const supabase = createClient()
+  // Use API routes for DB updates with Postgres
 
   const addField = () => {
     const newField: SchemaField = {
@@ -76,16 +75,22 @@ export function SchemaEditor({ schema }: SchemaEditorProps) {
         },
       }
 
-      const { error } = await supabase
-        .from("schemas")
-        .update({
-          name: schemaName.trim(),
-          description: schemaDescription.trim(),
-          schema_definition: schemaDefinition,
-        })
-        .eq("id", schema.id)
-
-      if (error) throw error
+      const res = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update',
+          table: 'schemas',
+          data: {
+            name: schemaName.trim(),
+            description: schemaDescription.trim(),
+            schema_definition: schemaDefinition,
+          },
+          where: { op: 'eq', column: 'id', value: schema.id },
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || 'Update failed')
 
       router.push("/dashboard/schemas") // Updated route to use schemas (plural) for listing page
     } catch (error) {

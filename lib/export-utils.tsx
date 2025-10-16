@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server"
+import { query } from "@/lib/postgres/client"
 
 export interface ExportOptions {
   format: "csv" | "json" | "xlsx" | "sql" | "xml" | "parquet"
@@ -10,22 +10,18 @@ export interface ExportOptions {
 }
 
 export class ExportGenerator {
-  private supabase = createClient()
 
   async generateExport(jobId: string, options: ExportOptions): Promise<string | Buffer> {
     const { format, filters = {} } = options
 
-    // Get job data with better error handling
-    const { data: generatedData, error } = await (await this.supabase)
-      .from("generated_data")
-      .select("record_data, record_index")
-      .eq("job_id", jobId)
-      .order("record_index", { ascending: true })
-      .range(filters.offset || 0, (filters.offset || 0) + (filters.limit || 50000) - 1)
-
-    if (error) {
-      throw new Error(`Failed to fetch data: ${error.message}`)
-    }
+    // Get job data from Postgres
+    const offset = filters.offset || 0
+    const limit = filters.limit || 50000
+    const result = await query(
+      `SELECT record_data, record_index FROM generated_data WHERE job_id = $1 ORDER BY record_index ASC OFFSET $2 LIMIT $3`,
+      [jobId, offset, limit]
+    )
+    const generatedData = result.rows
 
     if (!generatedData || generatedData.length === 0) {
       throw new Error("No data found for export")

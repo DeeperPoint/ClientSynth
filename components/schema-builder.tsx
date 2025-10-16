@@ -1,7 +1,6 @@
 "use client"
 
 import { useState } from "react"
-import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -61,7 +60,7 @@ export function SchemaBuilder() {
   const [fields, setFields] = useState<SchemaField[]>([])
   const [isSaving, setIsSaving] = useState(false)
   const router = useRouter()
-  const supabase = createClient()
+  // Use server APIs for auth and DB (Postgres)
 
   const addField = () => {
     const newField: SchemaField = {
@@ -90,65 +89,30 @@ export function SchemaBuilder() {
 
     setIsSaving(true)
     try {
-      const { data: user } = await supabase.auth.getUser()
-      if (!user.user) throw new Error("Not authenticated")
+      const meRes = await fetch('/api/auth/me', { cache: 'no-store' })
+      const meJson = await meRes.json()
+      if (!meJson?.data?.user?.id) throw new Error("Not authenticated")
 
       let tenantId: string | null = null
-
-      // First try to get current_tenant_id from profile
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("current_tenant_id")
-        .eq("id", user.user.id)
-        .single()
-
-      if (profile?.current_tenant_id) {
-        tenantId = profile.current_tenant_id
-      } else {
-        // If no current tenant, get user's tenants and use the first one
-        const { data: userTenants } = await supabase
-          .from("tenants")
-          .select(`
-            id,
-            name,
-            user_tenant_roles!inner(role)
-          `)
-          .eq("user_tenant_roles.user_id", user.user.id)
-          .limit(1)
-
-        if (userTenants && userTenants.length > 0) {
-          tenantId = userTenants[0].id
-
-          // Update profile with current tenant
-          await supabase.from("profiles").update({ current_tenant_id: tenantId }).eq("id", user.user.id)
-        } else {
-          // Create a default tenant for the user
-          const defaultTenantName = user.user.email?.split("@")[0] + "'s Organization" || "My Organization"
-          const slug = defaultTenantName
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-|-$/g, "")
-
-          // Create tenant
-          const { data: newTenant, error: tenantError } = await supabase
-            .from("tenants")
-            .insert({ name: defaultTenantName, slug })
-            .select("id")
-            .single()
-
-          if (tenantError) throw tenantError
-
-          // Add user as owner
-          const { error: roleError } = await supabase
-            .from("user_tenant_roles")
-            .insert({ user_id: user.user.id, tenant_id: newTenant.id, role: "owner" })
-
-          if (roleError) throw roleError
-
-          tenantId = newTenant.id
-
-          // Update profile with current tenant
-          await supabase.from("profiles").update({ current_tenant_id: tenantId }).eq("id", user.user.id)
+      // Use our server APIs to determine tenant
+      try {
+        const tenantsRes = await fetch('/api/user/tenants', { cache: 'no-store' })
+        if (tenantsRes.ok) {
+          const tenants = await tenantsRes.json()
+          if (Array.isArray(tenants) && tenants.length > 0) {
+            tenantId = tenants[0].id
+          }
+        }
+      } catch {}
+      if (!tenantId) {
+        // Create or fetch a default tenant for this user via server route
+        await fetch('/api/tenants/create-default', { method: 'POST' })
+        const tenantsRes2 = await fetch('/api/user/tenants', { cache: 'no-store' })
+        if (tenantsRes2.ok) {
+          const tenants = await tenantsRes2.json()
+          if (Array.isArray(tenants) && tenants.length > 0) {
+            tenantId = tenants[0].id
+          }
         }
       }
 
@@ -167,15 +131,23 @@ export function SchemaBuilder() {
         },
       }
 
-      const { error } = await supabase.from("schemas").insert({
-        name: schemaName.trim(),
-        description: schemaDescription.trim(),
-        schema_definition: schemaDefinition,
-        created_by: user.user.id,
-        tenant_id: tenantId,
+      const dbRes = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'insert',
+          table: 'schemas',
+          data: {
+            name: schemaName.trim(),
+            description: schemaDescription.trim(),
+            schema_definition: schemaDefinition,
+            created_by: meJson.data.user.id,
+            tenant_id: tenantId,
+          },
+        }),
       })
-
-      if (error) throw error
+      const dbJson = await dbRes.json()
+      if (!dbRes.ok) throw new Error(dbJson?.error || 'Failed to insert schema')
 
       router.push("/dashboard/schemas")
     } catch (error) {

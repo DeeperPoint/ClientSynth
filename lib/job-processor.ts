@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js"
+import { query, withTransaction } from "@/lib/postgres/client"
 import { AIGenerator, type GenerationContext } from "@/lib/ai-generator"
 import { ImageGenerator } from "@/lib/image-generator"
 import { S3Uploader } from "@/lib/s3-uploader"
@@ -48,7 +48,6 @@ export interface JobRecoveryState {
 }
 
 export class JobProcessor {
-  private supabase: any
   private aiGenerator: AIGenerator
   private imageGenerator = new ImageGenerator()
   private s3Uploader = new S3Uploader()
@@ -67,12 +66,9 @@ export class JobProcessor {
   constructor() {
     console.log("[v0] JobProcessor constructor called")
     try {
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-
       console.log("[v0] Environment variables check:", {
-        hasSupabaseUrl: !!supabaseUrl,
-        hasServiceRoleKey: !!serviceRoleKey,
+        hasDatabaseUrl: !!process.env.DATABASE_URL,
+        hasJwtSecret: !!process.env.JWT_SECRET,
         hasOpenRouterKey: !!process.env.OPENROUTER_API_KEY,
         hasAwsAccessKey: !!process.env.AWS_ACCESS_KEY_ID,
         hasAwsSecretKey: !!process.env.AWS_SECRET_ACCESS_KEY,
@@ -80,19 +76,13 @@ export class JobProcessor {
         hasAwsRegion: !!process.env.AWS_REGION,
       })
 
-      if (!supabaseUrl || !serviceRoleKey) {
-        throw new Error(
-          "Missing required Supabase environment variables: NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY",
-        )
+      if (!process.env.DATABASE_URL) {
+        throw new Error("DATABASE_URL environment variable is required")
       }
 
-      console.log("[v0] Creating Supabase client with service role...")
-      this.supabase = createClient(supabaseUrl, serviceRoleKey, {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false,
-        },
-      })
+      if (!process.env.JWT_SECRET) {
+        throw new Error("JWT_SECRET environment variable is required")
+      }
 
       if (!process.env.OPENROUTER_API_KEY) {
         throw new Error("OPENROUTER_API_KEY environment variable is required for AI generation")
@@ -118,19 +108,44 @@ export class JobProcessor {
       console.error("[v0] Failed to initialize JobProcessor:", error)
       const errorMessage = error instanceof Error ? error.message : "Unknown error"
       throw new Error(
-        `JobProcessor initialization failed: ${errorMessage}. Check environment variables and Supabase connection.`,
+        `JobProcessor initialization failed: ${errorMessage}. Check environment variables and database connection.`,
       )
     }
   }
 
   private setupJobControlListener(): void {
-    this.supabase
-      .channel("job-controls")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "job_controls" }, (payload) => {
-        const signal = payload.new as JobControlSignal
-        this.handleJobControl(signal)
-      })
-      .subscribe()
+    // For PostgreSQL, we'll implement a polling mechanism
+    // In a production environment, you might use WebSockets or Server-Sent Events
+    setInterval(async () => {
+      try {
+        const result = await query(`
+          SELECT * FROM job_controls 
+          WHERE processed_at IS NULL 
+          AND job_id = $1
+          ORDER BY created_at ASC
+          LIMIT 1
+        `, [this.currentJob?.job_id])
+        
+        if (result.rows.length > 0) {
+          const control = result.rows[0]
+          const signal: JobControlSignal = {
+            action: control.action,
+            jobId: control.job_id,
+            timestamp: control.created_at
+          }
+          await this.handleJobControl(signal)
+          
+          // Mark as processed
+          await query(`
+            UPDATE job_controls 
+            SET processed_at = NOW() 
+            WHERE id = $1
+          `, [control.id])
+        }
+      } catch (error) {
+        console.error('Error checking job controls:', error)
+      }
+    }, 5000) // Check every 5 seconds
   }
 
   private async handleJobControl(signal: JobControlSignal): Promise<void> {
@@ -163,13 +178,11 @@ export class JobProcessor {
     const recoveryState = this.getRecoveryState(this.currentJob.job_id)
     recoveryState.pausedAt = new Date().toISOString()
 
-    await this.supabase
-      .from("jobs")
-      .update({
-        status: "paused",
-        recovery_state: recoveryState,
-      })
-      .eq("id", this.currentJob.job_id)
+    await query(`
+      UPDATE jobs 
+      SET status = 'paused', recovery_state = $1, updated_at = NOW()
+      WHERE id = $2
+    `, [JSON.stringify(recoveryState), this.currentJob.job_id])
 
     await this.logJobMessage(this.currentJob.job_id, "info", "Job paused by user request")
   }
@@ -181,13 +194,11 @@ export class JobProcessor {
     const recoveryState = this.getRecoveryState(this.currentJob.job_id)
     recoveryState.resumedAt = new Date().toISOString()
 
-    await this.supabase
-      .from("jobs")
-      .update({
-        status: "processing",
-        recovery_state: recoveryState,
-      })
-      .eq("id", this.currentJob.job_id)
+    await query(`
+      UPDATE jobs 
+      SET status = 'running', recovery_state = $1, updated_at = NOW()
+      WHERE id = $2
+    `, [JSON.stringify(recoveryState), this.currentJob.job_id])
 
     await this.logJobMessage(this.currentJob.job_id, "info", "Job resumed by user request")
   }
@@ -198,14 +209,11 @@ export class JobProcessor {
     this.isCancelled = true
     const recoveryState = this.getRecoveryState(this.currentJob.job_id)
 
-    await this.supabase
-      .from("jobs")
-      .update({
-        status: "cancelled",
-        completed_at: new Date().toISOString(),
-        recovery_state: recoveryState,
-      })
-      .eq("id", this.currentJob.job_id)
+    await query(`
+      UPDATE jobs 
+      SET status = 'cancelled', completed_at = NOW(), recovery_state = $1, updated_at = NOW()
+      WHERE id = $2
+    `, [JSON.stringify(recoveryState), this.currentJob.job_id])
 
     await this.logJobMessage(this.currentJob.job_id, "info", "Job cancelled by user request")
     this.currentJob = null
@@ -232,13 +240,10 @@ export class JobProcessor {
       try {
         const record = await this.generateSingleRecord(fields, recordIndex, this.currentJob)
 
-        await this.supabase.from("generated_data").insert({
-          job_id: this.currentJob.job_id,
-          tenant_id: this.currentJob.tenant_id,
-          record_data: record,
-          record_index: recordIndex,
-          created_at: new Date().toISOString(),
-        })
+        await query(`
+          INSERT INTO generated_data (job_id, tenant_id, record_data, record_index, created_at)
+          VALUES ($1, $2, $3, $4, NOW())
+        `, [this.currentJob.job_id, this.currentJob.tenant_id, JSON.stringify(record), recordIndex])
 
         recoveryState.failedRecords = recoveryState.failedRecords.filter((i) => i !== recordIndex)
 
@@ -265,7 +270,11 @@ export class JobProcessor {
       }
     }
 
-    await this.supabase.from("jobs").update({ recovery_state: recoveryState }).eq("id", this.currentJob.job_id)
+    await query(`
+      UPDATE jobs 
+      SET recovery_state = $1, updated_at = NOW()
+      WHERE id = $2
+    `, [JSON.stringify(recoveryState), this.currentJob.job_id])
   }
 
   private getRecoveryState(jobId: string): JobRecoveryState {
@@ -287,35 +296,29 @@ export class JobProcessor {
     console.log("[v0] processNextJob called")
     try {
       console.log("[v0] Querying for pending jobs...")
-      const { data: jobs, error } = await this.supabase
-        .from("jobs")
-        .select(`
-          id,
-          tenant_id,
-          schema_id,
-          name,
-          total_records,
-          config,
-          recovery_state,
-          schemas!inner(schema_definition)
-        `)
-        .in("status", ["pending", "paused"])
-        .order("created_at", { ascending: true })
-        .limit(1)
+      const result = await query(`
+        SELECT 
+          j.id,
+          j.tenant_id,
+          j.schema_id,
+          j.name,
+          j.total_records,
+          j.config,
+          j.recovery_state,
+          s.schema_definition
+        FROM jobs j
+        INNER JOIN schemas s ON j.schema_id = s.id
+        WHERE j.status IN ('pending', 'paused')
+        ORDER BY j.created_at ASC
+        LIMIT 1
+      `)
 
-      if (error) {
-        console.error("[v0] Error getting next job:", error)
-        return false
-      }
-
-      console.log("[v0] Jobs query result:", { jobCount: jobs?.length || 0 })
-
-      if (!jobs || jobs.length === 0) {
+      if (result.rows.length === 0) {
         console.log("[v0] No pending jobs found")
         return false
       }
 
-      const jobRow = jobs[0]
+      const jobRow = result.rows[0]
       console.log("[v0] Processing job:", jobRow.id, jobRow.name)
 
       const job: JobData = {
@@ -325,7 +328,7 @@ export class JobProcessor {
         name: jobRow.name,
         total_records: jobRow.total_records,
         config: jobRow.config || {},
-        schema_definition: jobRow.schemas.schema_definition,
+        schema_definition: jobRow.schema_definition,
       }
 
       console.log("[v0] Job data prepared:", {
@@ -352,19 +355,12 @@ export class JobProcessor {
       console.log("[v0] Setting AI models:", { textModel, imageModel })
       this.aiGenerator.setModel(textModel)
 
-      console.log("[v0] Updating job status to processing...")
-      const { error: updateError } = await this.supabase
-        .from("jobs")
-        .update({
-          status: "processing",
-          started_at: new Date().toISOString(),
-        })
-        .eq("id", job.job_id)
-
-      if (updateError) {
-        console.error("[v0] Failed to update job status:", updateError)
-        throw new Error(`Failed to update job status: ${updateError.message}`)
-      }
+      console.log("[v0] Updating job status to running...")
+      await query(`
+        UPDATE jobs 
+        SET status = 'running', started_at = NOW(), updated_at = NOW()
+        WHERE id = $1
+      `, [job.job_id])
 
       await this.logJobMessage(job.job_id, "info", `Started processing job: ${job.name}`, {
         textModel,
@@ -377,14 +373,11 @@ export class JobProcessor {
 
       if (!this.isCancelled && !this.isPaused) {
         console.log("[v0] Job completed successfully, updating status...")
-        await this.supabase
-          .from("jobs")
-          .update({
-            status: "completed",
-            completed_at: new Date().toISOString(),
-            progress: 100,
-          })
-          .eq("id", job.job_id)
+        await query(`
+          UPDATE jobs 
+          SET status = 'completed', completed_at = NOW(), progress = 100, updated_at = NOW()
+          WHERE id = $1
+        `, [job.job_id])
 
         await this.logJobMessage(job.job_id, "info", `Completed job: ${job.name}`)
         console.log("[v0] Job processing completed successfully")
@@ -399,15 +392,11 @@ export class JobProcessor {
         const recoveryState = this.getRecoveryState(this.currentJob.job_id)
 
         console.log("[v0] Updating job status to failed...")
-        await this.supabase
-          .from("jobs")
-          .update({
-            status: "failed",
-            error_message: error instanceof Error ? error.message : "Unknown error",
-            completed_at: new Date().toISOString(),
-            recovery_state: recoveryState,
-          })
-          .eq("id", this.currentJob.job_id)
+        await query(`
+          UPDATE jobs 
+          SET status = 'failed', error_message = $1, completed_at = NOW(), recovery_state = $2, updated_at = NOW()
+          WHERE id = $3
+        `, [error instanceof Error ? error.message : "Unknown error", JSON.stringify(recoveryState), this.currentJob.job_id])
 
         await this.logJobMessage(
           this.currentJob.job_id,
@@ -432,10 +421,10 @@ export class JobProcessor {
     console.log(`[v0][SERVER][JobProcessor] Generating ${total_records} records for ${fields.length} fields`)
     console.log(
       "[v0] Schema fields:",
-      fields.map((f) => ({ name: f.name, type: f.type })),
+      fields.map((f: any) => ({ name: f.name, type: f.type })),
     )
 
-    const batchSize = Math.min(config.batch_size || 5, 10)
+    const batchSize = Math.min((config as any).batch_size || 5, 10)
     const recoveryState = this.getRecoveryState(job_id)
     let generatedCount = recoveryState.lastSuccessfulRecord + 1
 
@@ -474,14 +463,11 @@ export class JobProcessor {
           recoveryState.lastSuccessfulRecord = recordIndex
           const progress = Math.floor((generatedCount / total_records) * 100)
 
-          await this.supabase
-            .from("jobs")
-            .update({
-              generated_records: generatedCount,
-              progress: progress,
-              recovery_state: recoveryState,
-            })
-            .eq("id", job_id)
+          await query(`
+            UPDATE jobs 
+            SET generated_records = $1, progress = $2, recovery_state = $3, updated_at = NOW()
+            WHERE id = $4
+          `, [generatedCount, progress, JSON.stringify(recoveryState), job_id])
 
           console.log(`[v0][SERVER][JobProcessor] Generated record ${generatedCount}/${total_records} (${progress}%)`)
         } catch (error) {
@@ -506,16 +492,23 @@ export class JobProcessor {
           created_at: new Date().toISOString(),
         }))
 
-        const { error: insertError } = await this.supabase.from("generated_data").insert(recordsToInsert)
-
-        if (insertError) {
+        try {
+          const insertPromises = recordsToInsert.map(record => 
+            query(`
+              INSERT INTO generated_data (job_id, tenant_id, record_data, record_index, created_at)
+              VALUES ($1, $2, $3, $4, NOW())
+            `, [record.job_id, record.tenant_id, JSON.stringify(record.record_data), record.record_index])
+          )
+          
+          await Promise.all(insertPromises)
+        } catch (insertError) {
           console.error(`[v0][SERVER][JobProcessor] Failed to save batch:`, insertError)
-          throw new Error(`Failed to save generated data: ${insertError.message}`)
+          throw new Error(`Failed to save generated data: ${insertError instanceof Error ? insertError.message : 'Unknown error'}`)
         }
         console.log(`[v0] Successfully saved batch to database`)
       }
 
-      const delay = fields.some((f) => this.shouldUseAI(f.type)) ? 200 : 50
+      const delay = fields.some((f: any) => this.shouldUseAI(f.type)) ? 200 : 50
       console.log(`[v0] Waiting ${delay}ms before next batch...`)
       await new Promise((resolve) => setTimeout(resolve, delay))
     }
@@ -640,25 +633,30 @@ export class JobProcessor {
       count: imagesPerRecord,
     })
 
-    await this.supabase.from("media").insert({
-      tenant_id: job.tenant_id,
-      job_id: job.job_id,
-      record_id: `record_${recordIndex}`,
-      field_name: field.name,
-      s3_key: imageResult.s3Key,
-      s3_url: imageResult.url,
-      content_type: "image/png",
-      file_size: imageResult.fileSize || 0,
-      md5_hash: imageResult.md5Hash || "",
-      model_used: imageModel,
-      prompt_used: contextPrompt,
-      generation_metadata: {
+    await query(`
+      INSERT INTO media (
+        tenant_id, job_id, record_id, field_name, s3_key, s3_url, 
+        content_type, file_size, md5_hash, model_used, prompt_used, generation_metadata
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    `, [
+      job.tenant_id,
+      job.job_id,
+      `record_${recordIndex}`,
+      field.name,
+      imageResult.s3Key,
+      imageResult.url,
+      "image/png",
+      imageResult.fileSize || 0,
+      imageResult.md5Hash || "",
+      imageModel,
+      contextPrompt,
+      JSON.stringify({
         recordData: recordData,
         fieldDescription: field.description,
         imagesPerRecord,
         generationTime: new Date().toISOString(),
-      },
-    })
+      })
+    ])
 
     await this.logJobMessage(job.job_id, "info", `Generated AI image for field: ${field.name}`, {
       model: imageModel,
@@ -875,17 +873,19 @@ export class JobProcessor {
   private async logJobMessage(jobId: string, level: string, message: string, metadata: any = {}): Promise<void> {
     try {
       console.log(`[v0] Logging job message [${level}]: ${message}`, metadata)
-      await this.supabase.from("job_logs").insert({
-        job_id: jobId,
+      await query(`
+        INSERT INTO job_logs (job_id, level, message, metadata, created_at)
+        VALUES ($1, $2, $3, $4, NOW())
+      `, [
+        jobId,
         level,
         message,
-        metadata: {
+        JSON.stringify({
           ...metadata,
           timestamp: new Date().toISOString(),
           processor_version: "2.0",
-        },
-        created_at: new Date().toISOString(),
-      })
+        })
+      ])
     } catch (error) {
       console.error("[v0][SERVER][JobProcessor] Error logging job message:", error)
     }

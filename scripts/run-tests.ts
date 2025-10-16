@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js"
+import { createServerClient } from "@/lib/supabase/server"
 import { GoogleFlashProvider } from "../lib/image-generation/providers/google-flash-provider"
 import { BatchImageGenerator } from "../lib/batch-image-generator"
 import { JobProcessor } from "../lib/job-processor"
@@ -6,8 +6,6 @@ import { S3Uploader } from "../lib/s3-uploader"
 
 // Test configuration
 const TEST_CONFIG = {
-  supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
   googleApiKey: process.env.GOOGLE_AI_API_KEY!,
   testTenantId: process.env.TEST_TENANT_ID || "test-tenant-id",
   testSchemaId: process.env.TEST_SCHEMA_ID || "test-schema-id",
@@ -64,7 +62,7 @@ async function testGoogleFlashProvider() {
 // Test 2: Batch Image Generator
 async function testBatchImageGenerator() {
   console.log("[v0] Initializing Batch Image Generator...")
-  const supabase = createClient(TEST_CONFIG.supabaseUrl, TEST_CONFIG.supabaseKey)
+  const supabase = await createServerClient()
   const s3Uploader = new S3Uploader()
   const generator = new BatchImageGenerator(supabase, s3Uploader)
 
@@ -121,7 +119,7 @@ async function testBatchImageGenerator() {
 // Test 3: Job Processor End-to-End
 async function testJobProcessorEndToEnd() {
   console.log("[v0] Initializing Job Processor...")
-  const supabase = createClient(TEST_CONFIG.supabaseUrl, TEST_CONFIG.supabaseKey)
+  const supabase = await createServerClient()
 
   console.log("[v0] Creating test schema...")
   const { data: schema, error: schemaError } = await supabase
@@ -257,7 +255,7 @@ async function main() {
 
   // Validate environment
   console.log("\n📋 Validating Environment...")
-  const requiredEnvVars = ["NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "GOOGLE_AI_API_KEY"]
+  const requiredEnvVars = ["GOOGLE_AI_API_KEY"]
 
   const missingVars = requiredEnvVars.filter((v) => !process.env[v])
   if (missingVars.length > 0) {

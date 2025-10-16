@@ -2,9 +2,8 @@
 
 import type React from "react"
 
-import { useState, useEffect } from "react"
-import type { User } from "@supabase/supabase-js"
-import { createClient } from "@/lib/supabase/client"
+import { useState, useEffect, useRef } from "react"
+// Removed Supabase imports - using custom auth
 import { TenantSwitcher } from "@/components/tenant-switcher"
 import { Button } from "@/components/ui/button"
 import { LogOut, Settings, UserIcon, FileText, Play, Download, Sparkles } from "lucide-react"
@@ -28,6 +27,13 @@ interface Tenant {
   role: string
 }
 
+interface User {
+  id: string
+  email: string
+  full_name?: string
+  avatar_url?: string
+}
+
 interface DashboardShellProps {
   user: User
   children: React.ReactNode
@@ -38,9 +44,10 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
   const [currentTenant, setCurrentTenant] = useState<Tenant | null>(null)
   const [profile, setProfile] = useState<any>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const hasEnsuredDefaultTenant = useRef(false)
   const router = useRouter()
   const pathname = usePathname()
-  const supabase = createClient()
+  // Removed Supabase client - using custom auth
 
   useEffect(() => {
     loadUserData()
@@ -49,40 +56,35 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
   const loadUserData = async () => {
     try {
       // Load profile
-      const { data: profileData } = await supabase.from("profiles").select("*").eq("id", user.id).single()
-
-      setProfile(profileData)
-
-      // Load tenants
-      const { data: tenantsData } = await supabase
-        .from("tenants")
-        .select(`
-          id,
-          name,
-          slug,
-          user_tenant_roles!inner(role)
-        `)
-        .eq("user_tenant_roles.user_id", user.id)
-        .order("name")
-
-      if (tenantsData) {
-        const formattedTenants = tenantsData.map((tenant: any) => ({
-          id: tenant.id,
-          name: tenant.name,
-          slug: tenant.slug,
-          role: tenant.user_tenant_roles[0]?.role || "member",
-        }))
-        setTenants(formattedTenants)
-
-        // Set first tenant as current if none selected
-        if (formattedTenants.length > 0 && !currentTenant) {
-          setCurrentTenant(formattedTenants[0])
-        }
+      const profileResponse = await fetch('/api/user/profile')
+      if (profileResponse.ok) {
+        const profileData = await profileResponse.json()
+        setProfile(profileData)
       }
 
-      // If no tenants, create a default one
-      if (!tenantsData || tenantsData.length === 0) {
-        await createDefaultTenant()
+      // Load tenants
+      const tenantsResponse = await fetch('/api/user/tenants', { cache: 'no-store' })
+      if (tenantsResponse.ok) {
+        const tenantsData = await tenantsResponse.json()
+        setTenants(tenantsData)
+
+        // Set first tenant as current if none selected
+        if (tenantsData.length > 0 && !currentTenant) {
+          setCurrentTenant(tenantsData[0])
+        }
+        // If no tenants, create a default one once, then reload tenants
+        if (tenantsData.length === 0 && !hasEnsuredDefaultTenant.current) {
+          hasEnsuredDefaultTenant.current = true
+          await createDefaultTenant()
+          const tenantsResponse2 = await fetch('/api/user/tenants', { cache: 'no-store' })
+          if (tenantsResponse2.ok) {
+            const tenantsData2 = await tenantsResponse2.json()
+            setTenants(tenantsData2)
+            if (tenantsData2.length > 0) {
+              setCurrentTenant(tenantsData2[0])
+            }
+          }
+        }
       }
     } catch (error) {
       console.error("Error loading user data:", error)
@@ -93,15 +95,14 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
 
   const createDefaultTenant = async () => {
     try {
-      const { data, error } = await supabase.rpc("create_default_tenant_for_user", {
-        user_id: user.id,
-        user_email: user.email,
+      const response = await fetch('/api/tenants/create-default', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ user_id: user.id, user_email: user.email }),
       })
-
-      if (!error && data) {
-        // Reload tenants
-        loadUserData()
-      }
+      // Don't recursively call loadUserData here; caller will refresh tenants once
     } catch (error) {
       console.error("Error creating default tenant:", error)
     }
@@ -113,27 +114,28 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "")
 
-    const { data: tenant, error: tenantError } = await supabase
-      .from("tenants")
-      .insert({ name, slug })
-      .select("id, name, slug")
-      .single()
+    try {
+      const response = await fetch('/api/tenants/create', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name, slug }),
+      })
 
-    if (tenantError) throw tenantError
-
-    const { error: roleError } = await supabase
-      .from("user_tenant_roles")
-      .insert({ user_id: user.id, tenant_id: tenant.id, role: "owner" })
-
-    if (roleError) throw roleError
-
-    const newTenant = { ...tenant, role: "owner" }
-    setTenants((prev) => [...prev, newTenant])
-    setCurrentTenant(newTenant)
+      if (response.ok) {
+        const tenant = await response.json()
+        const newTenant = { ...tenant, role: "owner" }
+        setTenants((prev) => [...prev, newTenant])
+        setCurrentTenant(newTenant)
+      }
+    } catch (error) {
+      console.error("Error creating tenant:", error)
+    }
   }
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut()
+    await fetch('/api/auth/logout', { method: 'POST' })
     router.push("/")
   }
 
