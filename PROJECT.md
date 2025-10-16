@@ -221,9 +221,7 @@ Real-time job management interface:
 ### Required Environment Variables
 \`\`\`bash
 # Supabase Configuration
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+POSTGRES_URL=postgres://user:password@localhost:5432/db
 
 # Database (Auto-configured by Supabase)
 POSTGRES_URL=your_postgres_url

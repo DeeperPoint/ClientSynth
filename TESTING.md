@@ -50,8 +50,7 @@ The backend integration test suite (`scripts/run-tests.ts`) validates the entire
 Set the following environment variables:
 
 \`\`\`bash
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+POSTGRES_URL=postgres://user:password@localhost:5432/db
 GOOGLE_AI_API_KEY=your_google_ai_key
 AWS_ACCESS_KEY_ID=your_aws_key
 AWS_SECRET_ACCESS_KEY=your_aws_secret
@@ -215,8 +214,7 @@ jobs:
       - run: npm install
       - run: npm run test:all
         env:
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_KEY }}
+          POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
           GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_KEY }}
 \`\`\`
 

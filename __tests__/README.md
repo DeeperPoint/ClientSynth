@@ -85,8 +85,7 @@ End-to-end tests verify complete workflows from start to finish:
 Tests require the following environment variables:
 
 \`\`\`env
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+POSTGRES_URL=postgres://user:password@localhost:5432/db
 AWS_ACCESS_KEY_ID=your_aws_access_key
 AWS_SECRET_ACCESS_KEY=your_aws_secret_key
 AWS_S3_BUCKET=your_s3_bucket
