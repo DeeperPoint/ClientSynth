@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -88,68 +87,28 @@ export default function JobDetailPage() {
   const { toast } = useToast()
   const [isTriggering, setIsTriggering] = useState(false)
 
+  const formatRelativeSafe = (iso?: string) => {
+    if (!iso) return "—"
+    const d = new Date(iso)
+    if (isNaN(d.getTime())) return "—"
+    return formatDistanceToNow(d, { addSuffix: true })
+  }
+
   const params = useParams()
-  const supabase = createClient()
+  // Use Postgres-backed API endpoints instead of Supabase client
 
   useEffect(() => {
     loadJobDetails()
-
-    const jobSubscription = supabase
-      .channel(`job_${params.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "jobs",
-          filter: `id=eq.${params.id}`,
-        },
-        (payload) => {
-          console.log("[v0] Job update received:", payload)
-          handleJobUpdate(payload.new as Job)
-        },
-      )
-      .subscribe()
-
-    const logsSubscription = supabase
-      .channel(`job_logs_${params.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "job_logs",
-          filter: `job_id=eq.${params.id}`,
-        },
-        (payload) => {
-          console.log("[v0] New log received:", payload)
-          handleNewLog(payload.new as JobLog)
-        },
-      )
-      .subscribe()
-
-    const dataSubscription = supabase
-      .channel(`generated_data_${params.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "generated_data",
-          filter: `job_id=eq.${params.id}`,
-        },
-        () => {
-          loadSampleData()
-        },
-      )
-      .subscribe()
-
-    return () => {
-      jobSubscription.unsubscribe()
-      logsSubscription.unsubscribe()
-      dataSubscription.unsubscribe()
-    }
   }, [params.id])
+
+  useEffect(() => {
+    if (!isLiveMode) return
+    if (job?.status === "completed") return
+    const intervalId = setInterval(() => {
+      loadJobDetails()
+    }, 8000)
+    return () => clearInterval(intervalId)
+  }, [isLiveMode, job?.status])
 
   useEffect(() => {
     if (isLiveMode && logsEndRef.current) {
@@ -158,7 +117,7 @@ export default function JobDetailPage() {
   }, [logs, isLiveMode])
 
   useEffect(() => {
-    if (job && job.status === "processing") {
+    if (job && (job.status === "running" || job.status === "processing")) {
       calculateProgressStats()
     }
   }, [job]) // Updated to use job instead of job?.generated_records and job?.status
@@ -237,44 +196,72 @@ export default function JobDetailPage() {
     try {
       console.log("[v0] Loading job details for ID:", params.id)
 
-      const { data, error } = await supabase
-        .from("jobs")
-        .select(`
-          id,
-          name,
-          status,
-          progress,
-          total_records,
-          generated_records,
-          created_at,
-          updated_at,
-          started_at,
-          completed_at,
-          error_message,
-          config,
-          schemas(id, name, description, schema_definition),
-          profiles(full_name)
-        `)
-        .eq("id", params.id)
-        .single()
+      const jobRes = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'jobs',
+          columns: 'id, name, status, progress, total_records, generated_records, created_at, updated_at, started_at, completed_at, error_message, config, schema_id, created_by',
+          where: { op: 'eq', column: 'id', value: params.id },
+          single: true,
+        })
+      })
+      const jobJson = await jobRes.json()
+      const data = jobJson.data
+      if (!jobRes.ok || !data) throw new Error(jobJson.error || 'Job not found')
 
-      if (error) {
-        console.error("[v0] Error loading job:", error)
-        throw error
-      }
+      // Fetch associated schema and profile to enrich client-side (no joins in shim)
+      let schemaObj: any | null = null
+      try {
+        const schemaRes = await fetch('/api/db', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'select',
+            table: 'schemas',
+            columns: 'id, name, description, schema_definition',
+            where: { op: 'eq', column: 'id', value: (data as any).schema_id },
+            single: true,
+          })
+        })
+        const schemaJson = await schemaRes.json()
+        schemaObj = schemaJson.data || null
+      } catch {}
 
-      if (data && !data.schemas) {
-        console.warn("[v0] Job found but associated schema is missing or inaccessible")
-        data.schemas = {
-          id: "unknown",
-          name: "Schema Not Available",
-          description: "The associated schema is no longer available",
-          schema_definition: { fields: [] },
+      let profileObj: any | null = null
+      try {
+        if ((data as any).created_by) {
+          const profileRes = await fetch('/api/db', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'select',
+              table: 'profiles',
+              columns: 'full_name',
+              where: { op: 'eq', column: 'id', value: (data as any).created_by },
+              single: true,
+            })
+          })
+          const profileJson = await profileRes.json()
+          profileObj = profileJson.data || null
         }
+      } catch {}
+
+      const enriched: any = {
+        ...data,
+        schemas:
+          schemaObj || {
+            id: "unknown",
+            name: "Schema Not Available",
+            description: "The associated schema is no longer available",
+            schema_definition: { fields: [] },
+          },
+        profiles: profileObj || { full_name: "Unknown" },
       }
 
-      console.log("[v0] Job loaded successfully:", data)
-      setJob(data)
+      console.log("[v0] Job loaded successfully:", enriched)
+      setJob(enriched)
 
       if (data.status === "pending") {
         const createdAt = new Date(data.created_at)
@@ -300,15 +287,20 @@ export default function JobDetailPage() {
 
   const loadLogs = async () => {
     try {
-      const { data, error } = await supabase
-        .from("job_logs")
-        .select("*")
-        .eq("job_id", params.id)
-        .order("created_at", { ascending: false })
-        .limit(100)
-
-      if (error) throw error
-      setLogs(data || [])
+      const res = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'job_logs',
+          columns: '*',
+          where: { op: 'eq', column: 'job_id', value: params.id },
+          orderBy: { column: 'created_at', ascending: false },
+          limitCount: 100,
+        })
+      })
+      const json = await res.json()
+      setLogs(json.data || [])
     } catch (error) {
       console.error("Error loading logs:", error)
     }
@@ -316,15 +308,20 @@ export default function JobDetailPage() {
 
   const loadSampleData = async () => {
     try {
-      const { data, error } = await supabase
-        .from("generated_data")
-        .select("*")
-        .eq("job_id", params.id)
-        .order("record_index", { ascending: true })
-        .limit(10)
-
-      if (error) throw error
-      setSampleData(data || [])
+      const res = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'generated_data',
+          columns: '*',
+          where: { op: 'eq', column: 'job_id', value: params.id },
+          orderBy: { column: 'record_index', ascending: true },
+          limitCount: 10,
+        })
+      })
+      const json = await res.json()
+      setSampleData(json.data || [])
     } catch (error) {
       console.error("Error loading sample data:", error)
     }
@@ -340,19 +337,24 @@ export default function JobDetailPage() {
     if (!job) return
 
     try {
-      const { error } = await supabase
-        .from("jobs")
-        .update({
-          status: "pending",
-          error_message: null,
-          progress: 0,
-          generated_records: 0,
-          started_at: null,
-          completed_at: null,
+      const res = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update',
+          table: 'jobs',
+          data: {
+            status: 'pending',
+            error_message: null,
+            progress: 0,
+            generated_records: 0,
+            started_at: null,
+            completed_at: null,
+          },
+          where: { op: 'eq', column: 'id', value: job.id },
         })
-        .eq("id", job.id)
-
-      if (error) throw error
+      })
+      if (!res.ok) throw new Error('Failed to retry job')
       await loadJobDetails()
     } catch (error) {
       console.error("Error retrying job:", error)
@@ -410,7 +412,7 @@ export default function JobDetailPage() {
     switch (status) {
       case "completed":
         return "bg-chart-3/10 text-chart-3 border-chart-3/20"
-      case "processing":
+      case "running":
         return "bg-primary/10 text-primary border-primary/20"
       case "failed":
         return "bg-destructive/10 text-destructive border-destructive/20"
@@ -425,7 +427,7 @@ export default function JobDetailPage() {
     switch (status) {
       case "completed":
         return <CheckCircle className="h-4 w-4" />
-      case "processing":
+      case "running":
         return <Zap className="h-4 w-4 animate-pulse" />
       case "failed":
         return <AlertCircle className="h-4 w-4" />
@@ -521,7 +523,7 @@ export default function JobDetailPage() {
           <div className="flex items-center gap-3">
             <Badge className={`${getStatusColor(job.status)} text-sm px-3 py-1 border flex items-center gap-2`}>
               {getStatusIcon(job.status)}
-              {job.status.charAt(0).toUpperCase() + job.status.slice(1)}
+              {job.status ? job.status.charAt(0).toUpperCase() + job.status.slice(1) : "Unknown"}
             </Badge>
             {job.status === "failed" && (
               <Button onClick={retryJob} size="sm" variant="outline">
@@ -555,11 +557,11 @@ export default function JobDetailPage() {
               <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-primary">{job.generated_records.toLocaleString()}</div>
+                    <div className="text-2xl font-bold text-primary">{(job.generated_records ?? 0).toLocaleString()}</div>
                     <div className="text-sm text-muted-foreground">Generated</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-foreground">{job.total_records.toLocaleString()}</div>
+                    <div className="text-2xl font-bold text-foreground">{(job.total_records ?? 0).toLocaleString()}</div>
                     <div className="text-sm text-muted-foreground">Total</div>
                   </div>
                   <div className="text-center">
@@ -568,7 +570,7 @@ export default function JobDetailPage() {
                   </div>
                   <div className="text-center">
                     <div className="text-2xl font-bold text-chart-2">
-                      {job.status === "processing" ? formatDuration(progressStats.estimatedTimeRemaining) : "—"}
+                      {job.status === "running" || job.status === "processing" ? formatDuration(progressStats.estimatedTimeRemaining) : "—"}
                     </div>
                     <div className="text-sm text-muted-foreground">ETA</div>
                   </div>
@@ -578,13 +580,13 @@ export default function JobDetailPage() {
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm font-medium text-foreground">Progress</span>
                     <span className="text-sm text-muted-foreground">
-                      {job.generated_records} / {job.total_records} ({job.progress}%)
+                      {(job.generated_records ?? 0)} / {(job.total_records ?? 0)} ({job.progress ?? 0}%)
                     </span>
                   </div>
                   <Progress value={job.progress} className="h-4" />
                 </div>
 
-                {job.status === "processing" && (
+                {(job.status === "running" || job.status === "processing") && (
                   <div className="bg-primary/5 border border-primary/20 rounded-xl p-4">
                     <div className="flex items-center gap-2 mb-2">
                       <div className="w-2 h-2 bg-primary rounded-full animate-pulse"></div>
@@ -704,31 +706,23 @@ export default function JobDetailPage() {
               </div>
               <div>
                 <div className="text-sm text-muted-foreground mb-1">Created</div>
-                <div className="font-medium text-foreground">
-                  {formatDistanceToNow(new Date(job.created_at), { addSuffix: true })}
-                </div>
+                <div className="font-medium text-foreground">{formatRelativeSafe(job.created_at)}</div>
               </div>
               {job.started_at && (
                 <div>
                   <div className="text-sm text-muted-foreground mb-1">Started</div>
-                  <div className="font-medium text-foreground">
-                    {formatDistanceToNow(new Date(job.started_at), { addSuffix: true })}
-                  </div>
+                  <div className="font-medium text-foreground">{formatRelativeSafe(job.started_at)}</div>
                 </div>
               )}
               {job.completed_at && (
                 <div>
                   <div className="text-sm text-muted-foreground mb-1">Completed</div>
-                  <div className="font-medium text-foreground">
-                    {formatDistanceToNow(new Date(job.completed_at), { addSuffix: true })}
-                  </div>
+                  <div className="font-medium text-foreground">{formatRelativeSafe(job.completed_at)}</div>
                 </div>
               )}
               <div>
                 <div className="text-sm text-muted-foreground mb-1">Last Updated</div>
-                <div className="font-medium text-foreground">
-                  {formatDistanceToNow(new Date(job.updated_at), { addSuffix: true })}
-                </div>
+                <div className="font-medium text-foreground">{formatRelativeSafe(job.updated_at)}</div>
               </div>
               <div>
                 <div className="text-sm text-muted-foreground mb-1">Schema</div>

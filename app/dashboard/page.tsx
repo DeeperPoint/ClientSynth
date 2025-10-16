@@ -67,7 +67,7 @@ export default function DashboardPage() {
 
       const { data: recentJobs } = await supabase
         .from("jobs")
-        .select("id, schema_name, status, created_at")
+        .select("id, schema_id, status, created_at")
         .order("created_at", { ascending: false })
         .limit(3)
 
@@ -87,7 +87,7 @@ export default function DashboardPage() {
         ...(recentJobs?.map((job) => ({
           id: job.id,
           type: "job" as const,
-          title: `Generation job for "${job.schema_name}"`,
+          title: `Generation job ${job.id.substring(0, 8)}…`,
           status: job.status,
           created_at: job.created_at,
         })) || []),

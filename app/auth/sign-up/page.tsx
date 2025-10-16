@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { createClient } from "@/lib/supabase/client"
+// Removed Supabase import - using custom auth
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -21,23 +21,25 @@ export default function SignUpPage() {
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault()
-    const supabase = createClient()
     setIsLoading(true)
     setError(null)
 
     try {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/dashboard`,
-          data: {
-            full_name: fullName,
-          },
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
+        body: JSON.stringify({ email, password, full_name: fullName }),
       })
-      if (error) throw error
-      router.push("/auth/sign-up-success")
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Registration failed')
+      }
+
+      router.push("/dashboard")
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : "An error occurred")
     } finally {

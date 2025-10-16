@@ -77,26 +77,9 @@ export default function JobsPage() {
 
   useEffect(() => {
     loadJobs()
-
-    const subscription = supabase
-      .channel("jobs_management")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "jobs",
-        },
-        (payload) => {
-          console.log("[JobsPage] Job update received:", payload)
-          loadJobs()
-        },
-      )
-      .subscribe()
-
-    return () => {
-      subscription.unsubscribe()
-    }
+    // Fallback polling (realtime channel not available post-migration)
+    const intervalId = setInterval(loadJobs, 5000)
+    return () => clearInterval(intervalId)
   }, [])
 
   useEffect(() => {
@@ -107,20 +90,9 @@ export default function JobsPage() {
     try {
       const { data, error } = await supabase
         .from("jobs")
-        .select(`
-          id,
-          name,
-          status,
-          progress,
-          total_records,
-          generated_records,
-          created_at,
-          updated_at,
-          error_message,
-          config,
-          schemas(id, name),
-          profiles(full_name)
-        `)
+        .select(
+          "id, name, status, progress, total_records, generated_records, created_at, updated_at, error_message, config"
+        )
         .order("created_at", { ascending: false })
 
       if (error) throw error
@@ -259,7 +231,7 @@ export default function JobsPage() {
     switch (status) {
       case "completed":
         return "bg-chart-3/10 text-chart-3 border-chart-3/20"
-      case "processing":
+      case "running":
         return "bg-primary/10 text-primary border-primary/20"
       case "failed":
         return "bg-destructive/10 text-destructive border-destructive/20"
@@ -272,7 +244,7 @@ export default function JobsPage() {
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case "processing":
+      case "running":
         return <Zap className="h-3 w-3 animate-pulse" />
       case "completed":
         return <CheckCircle className="h-3 w-3" />
@@ -325,7 +297,7 @@ export default function JobsPage() {
     return {
       total: jobs.length,
       pending: jobs.filter((j) => j.status === "pending").length,
-      processing: jobs.filter((j) => j.status === "processing").length,
+      processing: jobs.filter((j) => j.status === "processing" || j.status === "running").length,
       completed: jobs.filter((j) => j.status === "completed").length,
       failed: jobs.filter((j) => j.status === "failed").length,
       totalRecords: jobs.reduce((sum, job) => sum + job.total_records, 0),
@@ -497,7 +469,7 @@ export default function JobsPage() {
                     <SelectContent>
                       <SelectItem value="all">All Status</SelectItem>
                       <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="processing">Processing</SelectItem>
+                      <SelectItem value="running">Processing</SelectItem>
                       <SelectItem value="completed">Completed</SelectItem>
                       <SelectItem value="failed">Failed</SelectItem>
                     </SelectContent>

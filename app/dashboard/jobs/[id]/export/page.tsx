@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -115,7 +114,7 @@ export default function ExportPage() {
   const [recordLimit, setRecordLimit] = useState("")
 
   const params = useParams()
-  const supabase = createClient()
+  // Use Postgres-backed API endpoints instead of Supabase client
 
   useEffect(() => {
     loadJobAndExports()
@@ -123,21 +122,39 @@ export default function ExportPage() {
 
   const loadJobAndExports = async () => {
     try {
-      // Load job details
-      const { data: jobData, error: jobError } = await supabase
-        .from("jobs")
-        .select(`
-          id,
-          name,
-          status,
-          total_records,
-          generated_records,
-          schemas(id, name, schema_definition)
-        `)
-        .eq("id", params.id)
-        .single()
+      // Load job details (no joins)
+      const jobRes = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'jobs',
+          columns: 'id, name, status, total_records, generated_records, schema_id',
+          where: { op: 'eq', column: 'id', value: params.id },
+          single: true,
+        })
+      })
+      const jobJson = await jobRes.json()
+      if (!jobRes.ok || !jobJson.data) throw new Error(jobJson.error || 'Job not found')
 
-      if (jobError) throw jobError
+      // Fetch schema separately
+      const schemaRes = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'schemas',
+          columns: 'id, name, schema_definition',
+          where: { op: 'eq', column: 'id', value: jobJson.data.schema_id },
+          single: true,
+        })
+      })
+      const schemaJson = await schemaRes.json()
+      const jobData = {
+        ...jobJson.data,
+        schemas: schemaJson.data || { id: 'unknown', name: 'Schema Not Available', schema_definition: { fields: [] }},
+      }
+
       setJob(jobData)
       setExportName(`${jobData.name} Export`)
 
@@ -146,14 +163,19 @@ export default function ExportPage() {
       setSelectedFields(fields.map((f: any) => f.name))
 
       // Load existing exports
-      const { data: exportsData, error: exportsError } = await supabase
-        .from("exports")
-        .select("*")
-        .eq("job_id", params.id)
-        .order("created_at", { ascending: false })
-
-      if (exportsError) throw exportsError
-      setExports(exportsData || [])
+      const exportsRes = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'exports',
+          columns: '*',
+          where: { op: 'eq', column: 'job_id', value: params.id },
+          orderBy: { column: 'created_at', ascending: false },
+        })
+      })
+      const exportsJson = await exportsRes.json()
+      setExports(exportsJson.data || [])
     } catch (error) {
       console.error("Error loading data:", error)
     } finally {

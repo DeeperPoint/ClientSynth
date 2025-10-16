@@ -1,7 +1,6 @@
 "use client"
 
 import { useState } from "react"
-import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -83,37 +82,37 @@ export default function QuickGeneratePage() {
   const [recordCount, setRecordCount] = useState("50")
   const [isGenerating, setIsGenerating] = useState(false)
   const router = useRouter()
-  const supabase = createClient()
+  // Use server APIs for auth/tenants instead of Supabase client
 
   const handleQuickGenerate = async () => {
     if (!selectedTemplate) return
 
     setIsGenerating(true)
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-      if (!user) throw new Error("Not authenticated")
+      const meRes = await fetch('/api/auth/me', { cache: 'no-store' })
+      if (!meRes.ok) throw new Error('Not authenticated')
+      const me = await meRes.json()
+      const user = me?.data?.user
+      if (!user) throw new Error('Not authenticated')
 
-      // Get or create tenant
+      // Get or create tenant using server APIs
       let tenantId: string | null = null
-      const { data: profile } = await supabase.from("profiles").select("current_tenant_id").eq("id", user.id).single()
-
-      if (profile?.current_tenant_id) {
-        tenantId = profile.current_tenant_id
-      } else {
-        const { data: userTenants } = await supabase
-          .from("tenants")
-          .select("id")
-          .eq("user_tenant_roles.user_id", user.id)
-          .limit(1)
-
-        if (userTenants && userTenants.length > 0) {
-          tenantId = userTenants[0].id
+      try {
+        const res = await fetch('/api/user/tenants', { cache: 'no-store' })
+        if (res.ok) {
+          const tenants = await res.json()
+          if (Array.isArray(tenants) && tenants.length > 0) tenantId = tenants[0].id
+        }
+      } catch {}
+      if (!tenantId) {
+        await fetch('/api/tenants/create-default', { method: 'POST' })
+        const res2 = await fetch('/api/user/tenants', { cache: 'no-store' })
+        if (res2.ok) {
+          const tenants = await res2.json()
+          if (Array.isArray(tenants) && tenants.length > 0) tenantId = tenants[0].id
         }
       }
-
-      if (!tenantId) throw new Error("No tenant found")
+      if (!tenantId) throw new Error('No tenant found')
 
       // Create schema from template
       const schemaDefinition = {
@@ -128,19 +127,25 @@ export default function QuickGeneratePage() {
         },
       }
 
-      const { data: schema, error: schemaError } = await supabase
-        .from("schemas")
-        .insert({
-          name: `${selectedTemplate.name} - Quick Generate`,
-          description: selectedTemplate.description,
-          schema_definition: schemaDefinition,
-          created_by: user.id,
-          tenant_id: tenantId,
-        })
-        .select()
-        .single()
-
-      if (schemaError) throw schemaError
+      const schemaRes = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'insert',
+          table: 'schemas',
+          data: {
+            name: `${selectedTemplate.name} - Quick Generate`,
+            description: selectedTemplate.description,
+            schema_definition: schemaDefinition,
+            created_by: user.id,
+            tenant_id: tenantId,
+          },
+          returning: '*',
+        }),
+      })
+      const schemaJson = await schemaRes.json()
+      if (!schemaRes.ok) throw new Error(schemaJson.error || 'Failed to create schema')
+      const schema = schemaJson.data
 
       // Create generation job
       const response = await fetch("/api/jobs/create", {

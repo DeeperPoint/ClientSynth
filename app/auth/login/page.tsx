@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { createClient } from "@/lib/supabase/client"
+// Removed Supabase import - using custom auth
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -20,23 +20,25 @@ export default function LoginPage() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    const supabase = createClient()
     setIsLoading(true)
     setError(null)
 
     console.log("[v0] Starting login process with email:", email)
-    console.log("[v0] Supabase URL:", process.env.NEXT_PUBLIC_SUPABASE_URL)
-    console.log("[v0] Supabase Anon Key exists:", !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password }),
       })
 
-      console.log("[v0] Login response error:", error)
+      const data = await response.json()
 
-      if (error) throw error
+      if (!response.ok) {
+        throw new Error(data.error || 'Login failed')
+      }
 
       console.log("[v0] Login successful, redirecting to dashboard")
       router.push("/dashboard")

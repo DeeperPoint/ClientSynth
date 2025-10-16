@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClient } from "@/lib/supabase/client"
+// Use API routes to read/write (Postgres)
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
@@ -25,8 +25,8 @@ interface Schema {
   schema_definition: any
   created_at: string
   created_by: string
-  profiles: {
-    full_name: string
+  profiles?: {
+    full_name?: string
   }
 }
 
@@ -39,7 +39,6 @@ export default function SchemasPage() {
     schemaId: "",
     schemaName: "",
   })
-  const supabase = createClient()
 
   useEffect(() => {
     loadSchemas()
@@ -47,21 +46,19 @@ export default function SchemasPage() {
 
   const loadSchemas = async () => {
     try {
-      const { data, error } = await supabase
-        .from("schemas")
-        .select(`
-          id,
-          name,
-          description,
-          schema_definition,
-          created_at,
-          created_by,
-          profiles(full_name)
-        `)
-        .order("created_at", { ascending: false })
-
-      if (error) throw error
-      setSchemas(data || [])
+      const res = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'schemas',
+          columns: 'id,name,description,schema_definition,created_at,created_by',
+          orderBy: { column: 'created_at', ascending: false },
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error || 'Failed to load schemas')
+      setSchemas(json.data || [])
     } catch (error) {
       console.error("Error loading schemas:", error)
       toast.error("Failed to load schemas")
@@ -77,9 +74,15 @@ export default function SchemasPage() {
   const confirmDelete = async () => {
     setDeletingId(deleteDialog.schemaId)
     try {
-      const { error } = await supabase.from("schemas").delete().eq("id", deleteDialog.schemaId)
-
-      if (error) throw error
+      const res = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', table: 'schemas', where: { op: 'eq', column: 'id', value: deleteDialog.schemaId } }),
+      })
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        throw new Error(j?.error || 'Delete failed')
+      }
 
       setSchemas(schemas.filter((s) => s.id !== deleteDialog.schemaId))
       toast.success(`Schema "${deleteDialog.schemaName}" deleted successfully`)
