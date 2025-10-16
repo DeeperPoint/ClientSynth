@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
+import { createServerClient } from "@/lib/postgres/server"
+import { query } from "@/lib/postgres/client"
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,42 +14,43 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid action" }, { status: 400 })
     }
 
-    const supabase = await createClient()
+    const db = await createServerClient()
     const {
       data: { user },
-    } = await supabase.auth.getUser()
+    } = await db.auth.getUser()
 
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
     // Verify user has access to this job
-    const { data: job } = await supabase
-      .from("jobs")
-      .select("tenant_id, status, can_be_cancelled, can_be_paused, can_be_retried")
-      .eq("id", jobId)
-      .single()
+    const jobResult = await query(`
+      SELECT tenant_id, status, can_be_cancelled, can_be_paused, can_be_retried
+      FROM jobs
+      WHERE id = $1
+    `, [jobId])
 
-    if (!job) {
+    if (jobResult.rows.length === 0) {
       return NextResponse.json({ error: "Job not found" }, { status: 404 })
     }
 
-    const { data: tenantAccess } = await supabase
-      .from("user_tenant_roles")
-      .select("tenant_id")
-      .eq("user_id", user.id)
-      .eq("tenant_id", job.tenant_id)
-      .single()
+    const job = jobResult.rows[0]
 
-    if (!tenantAccess) {
+    const tenantAccessResult = await query(`
+      SELECT tenant_id
+      FROM user_tenant_roles
+      WHERE user_id = $1 AND tenant_id = $2
+    `, [user.id, job.tenant_id])
+
+    if (tenantAccessResult.rows.length === 0) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 })
     }
 
     // Validate action is allowed for current job state
     const validations = {
-      pause: job.status === "processing" && job.can_be_paused,
+      pause: ["running", "processing"].includes(job.status) && job.can_be_paused,
       resume: job.status === "paused",
-      cancel: ["processing", "paused", "pending"].includes(job.status) && job.can_be_cancelled,
+      cancel: ["running", "processing", "paused", "pending"].includes(job.status) && job.can_be_cancelled,
       retry: ["failed", "paused"].includes(job.status) && job.can_be_retried,
     }
 
@@ -62,16 +64,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Send control signal using database function
-    const { data: controlId, error } = await supabase.rpc("send_job_control_signal", {
-      p_job_id: jobId,
-      p_action: action,
-      p_metadata: metadata,
-    })
+    const controlResult = await query(`
+      SELECT send_job_control_signal($1, $2, $3, $4) as control_id
+    `, [jobId, action, user.id, JSON.stringify(metadata)])
 
-    if (error) {
-      console.error("Failed to send job control signal:", error)
-      return NextResponse.json({ error: "Failed to send control signal" }, { status: 500 })
-    }
+    const controlId = controlResult.rows[0].control_id
 
     return NextResponse.json({
       success: true,

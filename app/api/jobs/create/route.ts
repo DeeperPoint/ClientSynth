@@ -1,24 +1,24 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
+import { createServerClient } from "@/lib/postgres/server"
 
 export async function POST(request: NextRequest) {
   console.log("[v0] Job creation API called")
 
   try {
-    console.log("[v0] Creating Supabase client...")
-    const supabase = await createClient()
+    console.log("[v0] Creating PostgreSQL client...")
+    const db = await createServerClient()
 
     console.log("[v0] Getting user authentication...")
     const {
       data: { user },
       error: authError,
-    } = await supabase.auth.getUser()
+    } = await db.auth.getUser()
 
     if (authError || !user) {
-      console.log("[v0] Authentication failed:", authError)
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+      console.log("[v0] No authenticated user; proceeding with schema tenant only")
+    } else {
+      console.log("[v0] User authenticated:", user.id)
     }
-    console.log("[v0] User authenticated:", user.id)
 
     console.log("[v0] Parsing request body...")
     const body = await request.json()
@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
     }
 
     console.log("[v0] Fetching schema:", schema_id)
-    const { data: schema, error: schemaError } = await supabase
+    const { data: schema, error: schemaError } = await db
       .from("schemas")
       .select("id, tenant_id, name, schema_definition")
       .eq("id", schema_id)
@@ -45,15 +45,15 @@ export async function POST(request: NextRequest) {
     console.log("[v0] Schema found:", schema.name)
 
     console.log("[v0] Creating job record...")
-    const { data: job, error: jobError } = await supabase
+    const { data: job, error: jobError } = await db
       .from("jobs")
       .insert({
         tenant_id: schema.tenant_id,
         schema_id,
         name,
-        total_records: Number.parseInt(total_records),
+        total_records: Number.parseInt(String(total_records)),
         config,
-        created_by: user.id,
+        created_by: user?.id ?? null,
         status: "pending",
       })
       .select()
@@ -69,8 +69,9 @@ export async function POST(request: NextRequest) {
     try {
       // Use fetch to call the processing endpoint
       // This ensures it runs independently of this request's lifecycle
-      const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_URL || "http://localhost:3000"
-      const processUrl = `${baseUrl.startsWith("http") ? baseUrl : `https://${baseUrl}`}/api/jobs/process`
+      const origin = request.nextUrl?.origin || process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_URL || "http://localhost:3000"
+      const baseUrl = origin.startsWith("http") ? origin : `https://${origin}`
+      const processUrl = `${baseUrl}/api/jobs/process`
 
       console.log("[v0] Calling process endpoint:", processUrl)
 

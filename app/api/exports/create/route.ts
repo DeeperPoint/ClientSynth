@@ -1,14 +1,15 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
+import { createServerClient } from "@/lib/postgres/server"
+import { query } from "@/lib/postgres/client"
 import { ExportGenerator } from "@/lib/export-utils"
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient()
+    const db = await createServerClient()
     const {
       data: { user },
       error: authError,
-    } = await supabase.auth.getUser()
+    } = await db.auth.getUser()
 
     if (authError || !user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -28,37 +29,30 @@ export async function POST(request: NextRequest) {
     }
 
     // Get job to validate access and get tenant_id
-    const { data: job, error: jobError } = await supabase
-      .from("jobs")
-      .select("id, tenant_id, name, status")
-      .eq("id", job_id)
-      .single()
+    const jobResult = await query(`
+      SELECT id, tenant_id, name, status
+      FROM jobs
+      WHERE id = $1
+    `, [job_id])
 
-    if (jobError || !job) {
+    if (jobResult.rows.length === 0) {
       return NextResponse.json({ error: "Job not found" }, { status: 404 })
     }
+
+    const job = jobResult.rows[0]
 
     if (job.status !== "completed") {
       return NextResponse.json({ error: "Job must be completed before exporting" }, { status: 400 })
     }
 
     // Create export record
-    const { data: exportRecord, error: exportError } = await supabase
-      .from("exports")
-      .insert({
-        tenant_id: job.tenant_id,
-        job_id,
-        name,
-        format,
-        filters,
-        created_by: user.id,
-      })
-      .select()
-      .single()
+    const exportResult = await query(`
+      INSERT INTO exports (tenant_id, job_id, name, format, filters, created_by, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+      RETURNING *
+    `, [job.tenant_id, job_id, name, format, JSON.stringify(filters), user.id])
 
-    if (exportError) {
-      return NextResponse.json({ error: exportError.message }, { status: 500 })
-    }
+    const exportRecord = exportResult.rows[0]
 
     // Generate export in background (in production, this would be a background job)
     try {
@@ -71,16 +65,11 @@ export async function POST(request: NextRequest) {
       const dataUrl = `data:${contentType};base64,${Buffer.from(content).toString("base64")}`
 
       // Update export record with completion
-      await supabase
-        .from("exports")
-        .update({
-          status: "completed",
-          file_url: dataUrl,
-          file_size: Buffer.byteLength(content, "utf8"),
-          record_count: content.split("\n").length - 1, // Rough estimate
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", exportRecord.id)
+      await query(`
+        UPDATE exports 
+        SET status = 'completed', file_url = $1, file_size = $2, record_count = $3, updated_at = NOW()
+        WHERE id = $4
+      `, [dataUrl, Buffer.byteLength(content, "utf8"), content.split("\n").length - 1, exportRecord.id])
 
       return NextResponse.json({
         success: true,
@@ -88,14 +77,11 @@ export async function POST(request: NextRequest) {
       })
     } catch (error) {
       // Update export record with error
-      await supabase
-        .from("exports")
-        .update({
-          status: "failed",
-          error_message: error instanceof Error ? error.message : "Unknown error",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", exportRecord.id)
+      await query(`
+        UPDATE exports 
+        SET status = 'failed', error_message = $1, updated_at = NOW()
+        WHERE id = $2
+      `, [error instanceof Error ? error.message : "Unknown error", exportRecord.id])
 
       return NextResponse.json({ error: error instanceof Error ? error.message : "Export failed" }, { status: 500 })
     }
