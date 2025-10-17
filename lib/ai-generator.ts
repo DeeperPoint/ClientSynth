@@ -7,6 +7,16 @@ export interface GenerationContext {
   tenantContext?: string
 }
 
+export interface PDFGenerationContext extends GenerationContext {
+  pdfTemplate?: {
+    title: string
+    fields: Array<{ name: string; label: string }>
+    pageSize?: 'A4' | 'LETTER'
+    marginMm?: number
+  }
+  pdfBase64?: string
+}
+
 interface StructuredOutputSchema {
   type: "object"
   properties: Record<string, any>
@@ -141,5 +151,27 @@ export class AIGenerator {
   async generateBatch(contexts: GenerationContext[]): Promise<string[]> {
     const promises = contexts.map((context) => this.generateFieldValue(context))
     return Promise.all(promises)
+  }
+
+  async generatePDFField(context: PDFGenerationContext): Promise<{ url: string; s3Key: string }> {
+    const { PDFGenerator } = await import('./pdf-generator')
+    const pdfGen = new PDFGenerator()
+
+    if (context.pdfTemplate) {
+      const result = await pdfGen.createTemplate(context.pdfTemplate)
+      if (!result.success || !result.pdfBase64) {
+        throw new Error(result.error || 'PDF template creation failed')
+      }
+      return { url: result.pdfBase64, s3Key: 'template' }
+    } else if (context.pdfBase64) {
+      const data = context.existingData || {}
+      const result = await pdfGen.fillPDF({ pdfBase64: context.pdfBase64, data })
+      if (!result.success || !result.pdfBase64) {
+        throw new Error(result.error || 'PDF filling failed')
+      }
+      return { url: result.pdfBase64, s3Key: 'filled' }
+    } else {
+      throw new Error('PDF template or base64 PDF required for PDF generation')
+    }
   }
 }
