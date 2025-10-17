@@ -622,6 +622,7 @@ export class JobProcessor {
           recordIndex,
           existingData: record,
           tenantContext: job.tenant_id,
+          schemaId: job.schema_id,
         }
 
         if (this.shouldUseAI(field.type)) {

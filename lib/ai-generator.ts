@@ -5,6 +5,8 @@ export interface GenerationContext {
   recordIndex: number
   existingData?: Record<string, any>
   tenantContext?: string
+  schemaId?: string
+  exampleData?: string[]
 }
 
 export interface PDFGenerationContext extends GenerationContext {
@@ -39,6 +41,28 @@ export class AIGenerator {
     }
   }
 
+  /**
+   * Fetch example data for a field from the database
+   */
+  async fetchExampleData(schemaId: string, fieldName: string, limit: number = 5): Promise<string[]> {
+    try {
+      const { query } = await import('@/lib/postgres/client')
+      const result = await query(`
+        SELECT DISTINCT ed.example_value
+        FROM example_data ed
+        JOIN example_files ef ON ed.example_file_id = ef.id
+        WHERE ef.schema_id = $1 AND ed.field_name = $2
+        ORDER BY ed.example_value
+        LIMIT $3
+      `, [schemaId, fieldName, limit])
+
+      return result.rows.map(row => row.example_value)
+    } catch (error) {
+      console.error('[AIGenerator] Failed to fetch example data:', error)
+      return []
+    }
+  }
+
   setModel(modelId: string): void {
     this.model = modelId
     console.log(`[AIGenerator] Switched to model: ${modelId}`)
@@ -49,8 +73,14 @@ export class AIGenerator {
   }
 
   async generateFieldValue(context: GenerationContext): Promise<string> {
-    const system = this.systemPromptFor(context)
-    const prompt = this.buildPrompt(context)
+    // Fetch example data if schemaId is provided
+    let exampleData = context.exampleData
+    if (!exampleData && context.schemaId) {
+      exampleData = await this.fetchExampleData(context.schemaId, context.fieldName)
+    }
+
+    const system = this.systemPromptFor(context, exampleData)
+    const prompt = this.buildPrompt(context, exampleData)
 
     console.log(`[AIGenerator] Generating with OpenRouter: ${this.model}`)
 
@@ -114,8 +144,10 @@ export class AIGenerator {
     }
   }
 
-  private systemPromptFor(context: GenerationContext): string {
+  private systemPromptFor(context: GenerationContext, exampleData?: string[]): string {
     const ft = context.fieldType
+    let basePrompt = ""
+    
     const prompts: Record<string, string> = {
       name: "Generate realistic human names. Return only the name value in JSON format.",
       email: "Generate realistic email addresses. Return only the email value in JSON format.",
@@ -123,10 +155,19 @@ export class AIGenerator {
       text: "Generate short, realistic text snippet. Return only the text value in JSON format.",
       description: "Generate concise descriptive text. Return only the description in JSON format.",
     }
-    return prompts[ft] || "Generate realistic data. Return only the value in JSON format."
+    
+    basePrompt = prompts[ft] || "Generate realistic data. Return only the value in JSON format."
+    
+    // Add example data context if available
+    if (exampleData && exampleData.length > 0) {
+      const examples = exampleData.slice(0, 5).join(', ')
+      basePrompt += `\n\nUse these examples as inspiration for the style and format: ${examples}`
+    }
+    
+    return basePrompt
   }
 
-  private buildPrompt(context: GenerationContext): string {
+  private buildPrompt(context: GenerationContext, exampleData?: string[]): string {
     const { fieldName, fieldDescription, existingData } = context
     const parts: string[] = [`Field: ${fieldName}`]
 
@@ -142,6 +183,12 @@ export class AIGenerator {
       if (pairs) {
         parts.push(`Context: ${pairs}`)
       }
+    }
+
+    // Add example data to prompt if available
+    if (exampleData && exampleData.length > 0) {
+      const examples = exampleData.slice(0, 3).join(', ')
+      parts.push(`Examples: ${examples}`)
     }
 
     parts.push('Return a JSON object with a "value" field containing only the generated value.')
