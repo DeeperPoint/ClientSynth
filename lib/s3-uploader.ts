@@ -140,6 +140,70 @@ export class S3Uploader {
     return successful
   }
 
+  async uploadFile(
+    fileBuffer: Buffer,
+    options: {
+      tenantId: string
+      schemaId: string
+      fileName: string
+      contentType?: string
+      md5Hash?: string
+    },
+  ): Promise<S3UploadResult> {
+    const { tenantId, schemaId, fileName, contentType = "application/octet-stream", md5Hash } = options
+
+    // Generate MD5 hash if not provided
+    const fileMd5Hash = md5Hash || crypto.createHash("md5").update(fileBuffer).digest("hex")
+
+    // Create structured key path for example files
+    const timestamp = new Date().toISOString().split("T")[0]
+    const randomSuffix = Math.random().toString(36).substring(2, 8)
+    const key = `example-files/${tenantId}/${timestamp}/${schemaId}/${fileName}-${fileMd5Hash.substring(0, 8)}-${randomSuffix}`
+
+    try {
+      const command = new PutObjectCommand({
+        Bucket: this.bucketName,
+        Key: key,
+        Body: fileBuffer,
+        ContentType: contentType,
+        Metadata: {
+          tenantId,
+          schemaId,
+          fileName,
+          md5: fileMd5Hash,
+          uploadedAt: new Date().toISOString(),
+        },
+        CacheControl: "public, max-age=31536000, immutable",
+        ContentDisposition: `attachment; filename="${fileName}"`,
+      })
+
+      await this.s3Client.send(command)
+
+      // Generate public URL
+      const region = process.env.AWS_REGION || "us-east-1"
+      const publicUrl = `https://${this.bucketName}.s3.${region}.amazonaws.com/${key}`
+
+      console.log(`[S3Uploader] Successfully uploaded file: ${key}`)
+
+      return {
+        key,
+        url: publicUrl,
+        publicUrl,
+        bucket: this.bucketName,
+        md5: fileMd5Hash,
+        size: fileBuffer.length,
+        metadata: {
+          size: fileBuffer.length,
+          contentType,
+          md5: fileMd5Hash,
+        },
+      }
+    } catch (error) {
+      console.error("[S3Uploader] File upload failed:", error)
+      throw new Error(`Failed to upload file to S3: ${error instanceof Error ? error.message : "Unknown error"}`)
+    }
+  }
+
   async getPresignedUrl(key: string, expiresIn = 3600): Promise<string> {
     try {
       const command = new GetObjectCommand({
