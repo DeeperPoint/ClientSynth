@@ -52,6 +52,7 @@ const FIELD_TYPES = [
   { value: "job_title", label: "Job Title", description: "Professional title (AI-generated)", ai: true },
   { value: "industry", label: "Industry", description: "Business industry (AI-generated)", ai: true },
   { value: "image", label: "Image", description: "AI-generated profile image", ai: true, icon: ImageIcon },
+  { value: "pdf", label: "PDF", description: "Generated PDF document", ai: true },
 ]
 
 export function SchemaBuilder() {
