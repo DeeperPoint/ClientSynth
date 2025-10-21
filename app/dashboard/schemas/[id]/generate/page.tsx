@@ -383,6 +383,7 @@ export default function GenerateDataPage() {
                             "url",
                           ].includes(field.type)
                           const isImage = field.type === "image"
+                          const isPDF = field.type === "pdf"
 
                           return (
                             <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
@@ -402,6 +403,11 @@ export default function GenerateDataPage() {
                                 {isImage && enableImages && (
                                   <Badge variant="secondary" className="text-xs bg-teal-100 text-teal-700">
                                     AI Image
+                                  </Badge>
+                                )}
+                                {isPDF && (
+                                  <Badge variant="secondary" className="text-xs bg-blue-100 text-blue-700">
+                                    AI PDF
                                   </Badge>
                                 )}
                                 {field.required && (

@@ -8,9 +8,10 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Plus, Trash2, GripVertical, ImageIcon, Pointer as Spinner } from "lucide-react"
+import { Plus, Trash2, GripVertical, ImageIcon, Pointer as Spinner, FileText } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty"
+import { ExampleFileUpload } from "@/components/example-file-upload"
 
 interface SchemaField {
   id: string
@@ -52,6 +53,7 @@ const FIELD_TYPES = [
   { value: "job_title", label: "Job Title", description: "Professional title (AI-generated)", ai: true },
   { value: "industry", label: "Industry", description: "Business industry (AI-generated)", ai: true },
   { value: "image", label: "Image", description: "AI-generated profile image", ai: true, icon: ImageIcon },
+  { value: "pdf", label: "PDF", description: "Generated PDF document", ai: true },
 ]
 
 export function SchemaBuilder() {
@@ -149,7 +151,8 @@ export function SchemaBuilder() {
       const dbJson = await dbRes.json()
       if (!dbRes.ok) throw new Error(dbJson?.error || 'Failed to insert schema')
 
-      router.push("/dashboard/schemas")
+      // Redirect to the new schema page
+      router.push(`/dashboard/schemas/${dbJson.data.id}`)
     } catch (error) {
       console.error("Error saving schema:", error)
       alert(`Failed to save schema: ${error instanceof Error ? error.message : "Unknown error"}`)
@@ -230,6 +233,24 @@ export function SchemaBuilder() {
           </div>
         </CardContent>
       </Card>
+
+      {fields.length > 0 && (
+        <Card className="glass-effect shadow-medium border-0">
+          <CardHeader>
+            <CardTitle className="text-2xl font-semibold">Example Data (Optional)</CardTitle>
+            <CardDescription className="text-lg">
+              Upload example files to guide AI generation and improve data quality
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="text-center py-8 text-muted-foreground">
+              <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p className="text-lg font-medium mb-2">Example files will be available after saving</p>
+              <p className="text-sm">Save your schema first, then you can upload example files to improve AI generation</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="glass-effect shadow-medium border-0">
         <CardHeader>

@@ -193,7 +193,7 @@ export default function SchemasPage() {
                       <DropdownMenuItem asChild>
                         <Link href={`/dashboard/schemas/${schema.id}`} className="flex items-center">
                           <Edit className="mr-2 h-4 w-4" />
-                          Edit Schema
+                          View Schema
                         </Link>
                       </DropdownMenuItem>
                       <DropdownMenuItem asChild>

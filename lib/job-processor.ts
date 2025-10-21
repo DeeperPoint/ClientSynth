@@ -1,7 +1,8 @@
 import { query, withTransaction } from "@/lib/postgres/client"
-import { AIGenerator, type GenerationContext } from "@/lib/ai-generator"
+import { AIGenerator, type GenerationContext, type PDFGenerationContext } from "@/lib/ai-generator"
 import { ImageGenerator } from "@/lib/image-generator"
 import { S3Uploader } from "@/lib/s3-uploader"
+import { PDFGenerator } from "@/lib/pdf-generator"
 
 export interface JobData {
   job_id: string
@@ -51,6 +52,7 @@ export class JobProcessor {
   private aiGenerator: AIGenerator
   private imageGenerator = new ImageGenerator()
   private s3Uploader = new S3Uploader()
+  private pdfGenerator = new PDFGenerator()
   private currentJob: JobData | null = null
 
   private jobControls = new Map<string, JobControlSignal>()
@@ -571,23 +573,67 @@ export class JobProcessor {
     for (const field of textFields) {
       console.log(`[v0] Generating field: ${field.name} (type: ${field.type})`)
 
-      const context: GenerationContext = {
-        fieldType: field.type,
-        fieldName: field.name,
-        fieldDescription: field.description,
-        recordIndex,
-        existingData: record,
-        tenantContext: job.tenant_id,
-      }
+      if (this.isPDFField(field.type)) {
+        console.log(`[v0] Using PDF generation for field: ${field.name}`)
+        const pdfContext: PDFGenerationContext = {
+          fieldType: field.type,
+          fieldName: field.name,
+          fieldDescription: field.description,
+          recordIndex,
+          existingData: record,
+          tenantContext: job.tenant_id,
+          pdfTemplate: field.pdfTemplate,
+          pdfBase64: field.pdfBase64,
+        }
 
-      if (this.shouldUseAI(field.type)) {
-        console.log(`[v0] Using AI generation for field: ${field.name}`)
-        record[field.name] = await this.aiGenerator.generateFieldValue(context)
-        console.log(`[v0] AI generated for ${field.name}:`, record[field.name])
+        // Fallback: if neither a template nor a base64 source is provided, generate a simple template
+        // so PDF generation does not fail with invalid base64 input during early runs/configs.
+        const hasTemplate = !!pdfContext.pdfTemplate
+        const hasBase64 = typeof pdfContext.pdfBase64 === 'string' && pdfContext.pdfBase64.length > 0
+
+        const templateFromRecord = {
+          title: pdfContext.fieldName || 'Generated PDF',
+          fields: Object.keys(record).length
+            ? Object.keys(record).map((k) => ({ name: k, label: k }))
+            : [{ name: 'content', label: 'Content' }],
+        }
+
+        const pdfOptions = hasTemplate
+          ? pdfContext.pdfTemplate
+          : hasBase64
+          ? { pdfBase64: pdfContext.pdfBase64 as string, data: record }
+          : templateFromRecord
+
+        const pdfResult = await this.pdfGenerator.generateAndUploadPDF(
+          job.tenant_id,
+          job.job_id,
+          `record_${recordIndex}`,
+          field.name,
+          pdfOptions,
+          record
+        )
+        record[field.name] = pdfResult.url
+        console.log(`[v0] PDF generated for ${field.name}:`, pdfResult.url)
       } else {
-        console.log(`[v0] Using fallback generation for field: ${field.name}`)
-        record[field.name] = await this.generateFieldValue(field, recordIndex)
-        console.log(`[v0] Fallback generated for ${field.name}:`, record[field.name])
+        const context: GenerationContext = {
+          fieldType: field.type,
+          fieldName: field.name,
+          fieldDescription: field.description,
+          recordIndex,
+          existingData: record,
+          tenantContext: job.tenant_id,
+          schemaId: job.schema_id,
+        }
+
+        if (this.shouldUseAI(field.type)) {
+          console.log(`[v0] Using AI generation for field: ${field.name}`)
+          record[field.name] = await this.aiGenerator.generateFieldValue(context)
+          console.log(`[v0] AI generated for ${field.name}:`, record[field.name])
+        } else {
+          console.log(`[v0] Using fallback generation for field: ${field.name}`)
+          record[field.name] = await this.generateFieldValue(field, recordIndex)
+          console.log(`[v0] Fallback generated for ${field.name}:`, record[field.name])
+        }
       }
     }
 
@@ -722,6 +768,10 @@ export class JobProcessor {
     ]
 
     return aiFields.includes(fieldType.toLowerCase())
+  }
+
+  private isPDFField(fieldType: string): boolean {
+    return fieldType.toLowerCase() === 'pdf'
   }
 
   private async generateFieldValue(field: any, recordIndex: number): Promise<any> {
