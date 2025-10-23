@@ -1,0 +1,4 @@
+AWS_S3_BUCKET=synthetic-client-assets-1761171658
+AWS_REGION=us-east-2
+
+Public URL: https://synthetic-client-assets-1761171658.s3.amazonaws.com/
