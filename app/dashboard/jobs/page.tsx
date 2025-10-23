@@ -88,15 +88,23 @@ export default function JobsPage() {
 
   const loadJobs = async () => {
     try {
-      const { data, error } = await supabase
-        .from("jobs")
-        .select(
-          "id, name, status, progress, total_records, generated_records, created_at, updated_at, error_message, config"
-        )
-        .order("created_at", { ascending: false })
+      const response = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'jobs',
+          columns: 'id, name, status, progress, total_records, generated_records, created_at, updated_at, error_message, config',
+          orderBy: { column: 'created_at', ascending: false }
+        })
+      })
 
-      if (error) throw error
-      setJobs(data || [])
+      if (!response.ok) {
+        throw new Error('Failed to load jobs')
+      }
+
+      const result = await response.json()
+      setJobs(result.data || [])
     } catch (error) {
       console.error("Error loading jobs:", error)
     } finally {

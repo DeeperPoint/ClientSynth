@@ -69,12 +69,12 @@ export class S3Client {
 
   async getSignedUrl(key: string, expiresIn = 3600): Promise<string> {
     // For now, return a placeholder URL - in production, implement proper S3 signed URLs
-    return `https://${this.bucket}.s3.${this.region}.amazonaws.com/${key}?expires=${Date.now() + expiresIn * 1000}`
+    return `https://${this.bucket}.s3.amazonaws.com/${key}?expires=${Date.now() + expiresIn * 1000}`
   }
 
   private async getSignedUploadUrl(key: string, contentLength: number, md5: string): Promise<string> {
     // Simplified - in production, implement proper S3 signed URL generation
-    return `https://${this.bucket}.s3.${this.region}.amazonaws.com/${key}`
+    return `https://${this.bucket}.s3.amazonaws.com/${key}`
   }
 
   private async getImageDimensions(buffer: Buffer): Promise<{ width: number; height: number }> {

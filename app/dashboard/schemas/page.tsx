@@ -46,21 +46,50 @@ export default function SchemasPage() {
 
   const loadSchemas = async () => {
     try {
+      console.log('[Schemas] Starting to load schemas...')
+      
+      // Fetch schemas with creator profile information
       const res = await fetch('/api/db', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'select',
           table: 'schemas',
-          columns: 'id,name,description,schema_definition,created_at,created_by',
-          orderBy: { column: 'created_at', ascending: false },
+          columns: 'schemas.id,schemas.name,schemas.description,schemas.schema_definition,schemas.created_at,schemas.created_by,profiles.full_name',
+          join: {
+            table: 'profiles',
+            on: 'schemas.created_by = profiles.id',
+            type: 'LEFT'
+          },
+          orderBy: { column: 'schemas.created_at', ascending: false },
         }),
       })
+      
+      console.log('[Schemas] Response status:', res.status)
       const json = await res.json()
+      console.log('[Schemas] Response JSON:', json)
+      
       if (!res.ok) throw new Error(json?.error || 'Failed to load schemas')
-      setSchemas(json.data || [])
+      
+      console.log('[Schemas] Number of schemas received:', (json.data || []).length)
+      
+      // Transform data to match expected structure
+      const schemasWithProfiles = (json.data || []).map((row: any) => ({
+        id: row.id,
+        name: row.name,
+        description: row.description,
+        schema_definition: row.schema_definition,
+        created_at: row.created_at,
+        created_by: row.created_by,
+        profiles: {
+          full_name: row.full_name || 'Unknown'
+        }
+      }))
+      
+      console.log('[Schemas] Setting schemas state with', schemasWithProfiles.length, 'schemas')
+      setSchemas(schemasWithProfiles)
     } catch (error) {
-      console.error("Error loading schemas:", error)
+      console.error("[Schemas] Error loading schemas:", error)
       toast.error("Failed to load schemas")
     } finally {
       setIsLoading(false)
