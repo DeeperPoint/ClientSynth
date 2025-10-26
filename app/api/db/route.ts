@@ -74,24 +74,30 @@ export async function POST(req: NextRequest) {
 
 		const table = body.table
 
-		if (body.action === "select") {
-			const cols = body.columns && body.columns.trim().length > 0 ? body.columns : "*"
-			const where = body.where
-			const order = body.orderBy
-			const limitCount = body.limitCount || body.limit
-			const join = body.join
-			
-			let sql = `SELECT ${cols} FROM ${table}`
-			const params: any[] = []
+	if (body.action === "select") {
+		let cols = body.columns && body.columns.trim().length > 0 ? body.columns : "*"
+		const where = body.where
+		const order = body.orderBy
+		const limitCount = body.limitCount || body.limit
+		const join = body.join
+		
+		// If there's a JOIN and columns aren't qualified, qualify them with table name
+		if (join && cols !== "*" && !cols.includes('.')) {
+			const columnNames = cols.split(',').map(c => c.trim())
+			cols = columnNames.map(col => `${table}.${col}`).join(', ')
+		}
+		
+		let sql = `SELECT ${cols} FROM ${table}`
+		const params: any[] = []
 
-			// Handle JOIN
-			if (join && join.table && join.on) {
-				if (!isSafeIdentifier(join.table)) {
-					return NextResponse.json({ error: "Invalid join table" }, { status: 400 })
-				}
-				const joinType = join.type || "LEFT"
-				sql += ` ${joinType} JOIN ${join.table} ON ${join.on}`
+		// Handle JOIN
+		if (join && join.table && join.on) {
+			if (!isSafeIdentifier(join.table)) {
+				return NextResponse.json({ error: "Invalid join table" }, { status: 400 })
 			}
+			const joinType = join.type || "LEFT"
+			sql += ` ${joinType} JOIN ${join.table} ON ${join.on}`
+		}
 
 			// Add tenant filtering for tenant-scoped tables
 			const tenantTables = ['schemas', 'jobs', 'exports', 'generated_data', 'media', 'example_files']
@@ -104,19 +110,22 @@ export async function POST(req: NextRequest) {
 				hasWhere = true
 			}
 
-			if (where) {
-				const whereKeyword = hasWhere ? ' AND' : ' WHERE'
-				const paramOffset = params.length
-				
-				if (where.op === "eq") {
-					sql += `${whereKeyword} ${where.column} = $${paramOffset + 1}`
-					params.push(where.value)
-				} else if (where.op === "in" && Array.isArray(where.values) && where.values.length > 0) {
-					const placeholders = where.values.map((_, i) => `$${paramOffset + i + 1}`).join(",")
-					sql += `${whereKeyword} ${where.column} IN (${placeholders})`
-					params.push(...where.values)
-				}
+		if (where) {
+			const whereKeyword = hasWhere ? ' AND' : ' WHERE'
+			const paramOffset = params.length
+			
+			// Qualify column name with table name if not already qualified
+			const whereColumn = where.column.includes('.') ? where.column : `${table}.${where.column}`
+			
+			if (where.op === "eq") {
+				sql += `${whereKeyword} ${whereColumn} = $${paramOffset + 1}`
+				params.push(where.value)
+			} else if (where.op === "in" && Array.isArray(where.values) && where.values.length > 0) {
+				const placeholders = where.values.map((_, i) => `$${paramOffset + i + 1}`).join(",")
+				sql += `${whereKeyword} ${whereColumn} IN (${placeholders})`
+				params.push(...where.values)
 			}
+		}
 
 			if (order) {
 				sql += ` ORDER BY ${order.column} ${order.ascending ? "ASC" : "DESC"}`
