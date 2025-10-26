@@ -21,8 +21,72 @@ export interface PDFFillOptions {
   data: Record<string, any>
 }
 
+export interface PDFContentOptions {
+  title: string
+  content: string
+  pageSize?: 'A4' | 'LETTER'
+  marginMm?: number
+}
+
 export class PDFGenerator {
   private s3Uploader = new S3Uploader()
+
+  async uploadPDFToS3(pdfBase64: string, tenantId: string, jobId: string, filename: string): Promise<{ url: string; s3Key: string }> {
+    const buffer = Buffer.from(pdfBase64, 'base64')
+    
+    // Use uploadBuffer which accepts a direct key path
+    const key = `${tenantId}/${jobId}/${filename}`
+    const result = await this.s3Uploader.uploadBuffer(buffer, key, 'application/pdf')
+    return { url: result.url, s3Key: result.s3Key }
+  }
+
+  async createFromContent(options: PDFContentOptions): Promise<{ success: boolean; pdfBase64?: string; error?: string }> {
+    return new Promise((resolve) => {
+      try {
+        const python = spawn('python', [
+          'lib/pdf_service.py',
+          'content',
+          options.title,
+          options.content,
+          options.pageSize || 'A4',
+          String(options.marginMm || 20)
+        ], {
+          cwd: process.cwd()
+        })
+
+        let output = ''
+        let error = ''
+
+        python.stdout.on('data', (data) => {
+          output += data.toString()
+        })
+
+        python.stderr.on('data', (data) => {
+          error += data.toString()
+        })
+
+        python.on('close', (code) => {
+          if (code !== 0) {
+            resolve({ success: false, error: error || 'Python process failed' })
+            return
+          }
+
+          try {
+            const result = JSON.parse(output)
+            resolve({
+              success: result.success,
+              pdfBase64: result.pdf_base64,
+              error: result.error
+            })
+          } catch (e) {
+            resolve({ success: false, error: 'Failed to parse Python output' })
+          }
+        })
+      } catch (e) {
+        resolve({ success: false, error: 'Failed to spawn Python process' })
+      }
+    })
+  }
 
   async createTemplate(options: PDFTemplateOptions): Promise<{ success: boolean; pdfBase64?: string; error?: string }> {
     return new Promise((resolve) => {

@@ -82,7 +82,12 @@ export class AIGenerator {
     const system = this.systemPromptFor(context, exampleData)
     const prompt = this.buildPrompt(context, exampleData)
 
-    console.log(`[AIGenerator] Generating with OpenRouter: ${this.model}`)
+    // Determine max_tokens based on field type
+    const fieldName = context.fieldName.toLowerCase()
+    const isDocument = context.fieldType === 'pdf' || fieldName.includes('resume') || fieldName.includes('cv') || fieldName.includes('document')
+    const maxTokens = isDocument ? 2000 : 150
+
+    console.log(`[AIGenerator] Generating with OpenRouter: ${this.model} (max_tokens: ${maxTokens})`)
 
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -113,7 +118,7 @@ export class AIGenerator {
             },
           },
         },
-        max_tokens: 150,
+        max_tokens: maxTokens,
         temperature: 0.7,
       }),
     })
@@ -146,17 +151,35 @@ export class AIGenerator {
 
   private systemPromptFor(context: GenerationContext, exampleData?: string[]): string {
     const ft = context.fieldType
+    const fieldName = context.fieldName.toLowerCase()
     let basePrompt = ""
     
-    const prompts: Record<string, string> = {
-      name: "Generate realistic human names. Return only the name value in JSON format.",
-      email: "Generate realistic email addresses. Return only the email value in JSON format.",
-      company: "Generate realistic company names. Return only the company name in JSON format.",
-      text: "Generate short, realistic text snippet. Return only the text value in JSON format.",
-      description: "Generate concise descriptive text. Return only the description in JSON format.",
+    // Check if this is a document/PDF field
+    if (ft === 'pdf' || fieldName.includes('resume') || fieldName.includes('cv') || fieldName.includes('document')) {
+      basePrompt = `You are a professional document generator. Generate a complete, realistic, and well-formatted ${context.fieldName}.
+      
+For a resume/CV, include:
+- Full contact information (name, email, phone, address)
+- Professional summary (2-3 sentences)
+- Work experience (2-3 positions with company, role, dates, and bullet points)
+- Education (degree, institution, graduation year)
+- Skills (relevant technical and soft skills)
+- Certifications or achievements if applicable
+
+For other documents, generate complete, professional content appropriate to the document type.
+
+Format the content as a complete document with proper sections and realistic details. Return the full document content in JSON format.`
+    } else {
+      const prompts: Record<string, string> = {
+        name: "Generate realistic human names. Return only the name value in JSON format.",
+        email: "Generate realistic email addresses. Return only the email value in JSON format.",
+        company: "Generate realistic company names. Return only the company name in JSON format.",
+        text: "Generate short, realistic text snippet. Return only the text value in JSON format.",
+        description: "Generate concise descriptive text. Return only the description in JSON format.",
+      }
+      
+      basePrompt = prompts[ft] || "Generate realistic data. Return only the value in JSON format."
     }
-    
-    basePrompt = prompts[ft] || "Generate realistic data. Return only the value in JSON format."
     
     // Add example data context if available
     if (exampleData && exampleData.length > 0) {

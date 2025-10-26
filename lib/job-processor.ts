@@ -575,45 +575,53 @@ export class JobProcessor {
 
       if (this.isPDFField(field.type)) {
         console.log(`[v0] Using PDF generation for field: ${field.name}`)
-        const pdfContext: PDFGenerationContext = {
+        console.log(`[v0] Job details - tenant_id: ${job.tenant_id}, job_id: ${job.job_id}`)
+        
+        // First, generate the PDF content using AI
+        const aiContext: GenerationContext = {
           fieldType: field.type,
           fieldName: field.name,
-          fieldDescription: field.description,
+          fieldDescription: field.description || `Generate a complete ${field.name}`,
           recordIndex,
           existingData: record,
           tenantContext: job.tenant_id,
-          pdfTemplate: field.pdfTemplate,
-          pdfBase64: field.pdfBase64,
+          schemaId: job.schema_id,
         }
-
-        // Fallback: if neither a template nor a base64 source is provided, generate a simple template
-        // so PDF generation does not fail with invalid base64 input during early runs/configs.
-        const hasTemplate = !!pdfContext.pdfTemplate
-        const hasBase64 = typeof pdfContext.pdfBase64 === 'string' && pdfContext.pdfBase64.length > 0
-
-        const templateFromRecord = {
-          title: pdfContext.fieldName || 'Generated PDF',
-          fields: Object.keys(record).length
-            ? Object.keys(record).map((k) => ({ name: k, label: k }))
-            : [{ name: 'content', label: 'Content' }],
+        
+        console.log(`[v0] Generating AI content for PDF field: ${field.name}`)
+        const pdfContent = await this.aiGenerator.generateFieldValue(aiContext)
+        console.log(`[v0] Generated PDF content (${pdfContent.length} chars)`)
+        
+        // Create a PDF directly from the AI-generated content
+        const { PDFGenerator } = await import('./pdf-generator')
+        const pdfGen = new PDFGenerator()
+        
+        const pdfResult = await pdfGen.createFromContent({
+          title: field.name || 'Generated Document',
+          content: pdfContent,
+          pageSize: 'A4',
+          marginMm: 20
+        })
+        
+        if (!pdfResult.success || !pdfResult.pdfBase64) {
+          throw new Error(pdfResult.error || 'PDF creation failed')
         }
-
-        const pdfOptions = hasTemplate
-          ? pdfContext.pdfTemplate
-          : hasBase64
-          ? { pdfBase64: pdfContext.pdfBase64 as string, data: record }
-          : templateFromRecord
-
-        const pdfResult = await this.pdfGenerator.generateAndUploadPDF(
+        
+        console.log(`[v0] PDF created successfully, uploading to S3...`)
+        
+        // Upload the PDF to S3
+        const filename = `record_${recordIndex}_${field.name}.pdf`
+        console.log(`[v0] Uploading PDF with: tenantId=${job.tenant_id}, jobId=${job.job_id}, filename=${filename}`)
+        
+        const s3Result = await pdfGen.uploadPDFToS3(
+          pdfResult.pdfBase64,
           job.tenant_id,
           job.job_id,
-          `record_${recordIndex}`,
-          field.name,
-          pdfOptions,
-          record
+          filename
         )
-        record[field.name] = pdfResult.url
-        console.log(`[v0] PDF generated for ${field.name}:`, pdfResult.url)
+        record[field.name] = s3Result.url
+        console.log(`[v0] PDF uploaded successfully for ${field.name}:`, s3Result.url)
+        console.log(`[v0] S3 Key:`, s3Result.s3Key)
       } else {
         const context: GenerationContext = {
           fieldType: field.type,
