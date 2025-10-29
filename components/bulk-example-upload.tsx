@@ -34,7 +34,7 @@ interface BulkUploadFile {
   uploadResult?: any
 }
 
-interface ExampleFileUploadProps {
+interface BulkExampleUploadProps {
   schemaId: string
   schemaFields: Array<{ name: string; type: string; description?: string }>
   onUploadComplete?: () => void
@@ -46,7 +46,7 @@ export function ExampleFileUpload({
   schemaFields, 
   onUploadComplete,
   onFieldsAdded 
-}: ExampleFileUploadProps) {
+}: BulkExampleUploadProps) {
   const [files, setFiles] = useState<BulkUploadFile[]>([])
   const [isDragActive, setIsDragActive] = useState(false)
   const [isUploading, setIsUploading] = useState(false)

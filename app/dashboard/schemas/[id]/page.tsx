@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { ArrowLeft, Edit, Play, FileText, Users, Calendar, Sparkles } from "lucide-react"
 import { ExampleFilesManager } from "@/components/example-files-manager"
+import { ExampleFileUpload } from "@/components/example-file-upload"
 import { toast } from "sonner"
 import Link from "next/link"
 
@@ -161,7 +162,7 @@ export default function SchemaEditPage() {
             </Link>
           </Button>
           <Button asChild>
-            <Link href={`/dashboard/schema/edit/${schema.id}`}>
+            <Link href={`/dashboard/schemas/${schema.id}/edit`}>
               <Edit className="h-4 w-4 mr-2" />
               Edit Schema
             </Link>
@@ -228,6 +229,22 @@ export default function SchemaEditPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Upload Example Files */}
+      <ExampleFileUpload
+        schemaId={schemaId}
+        schemaFields={schema.schema_definition.fields}
+        onUploadComplete={() => {
+          toast.success("Files uploaded successfully!")
+          // Refresh the page to show updated files
+          window.location.reload()
+        }}
+        onFieldsAdded={(newFields) => {
+          toast.success(`${newFields.length} new fields added to schema`)
+          // Refresh schema data
+          loadSchema()
+        }}
+      />
 
       {/* Example Files Manager */}
       <ExampleFilesManager
