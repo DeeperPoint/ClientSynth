@@ -51,8 +51,15 @@ export async function POST(
 
     const seeds = labelResult.validatedSeeds
 
+    // Check if we have records
+    if (!seeds || !seeds.records || seeds.records.length === 0) {
+      return NextResponse.json(
+        { error: "No seed records available to export. Please ensure example files are uploaded and mapped to schema fields." },
+        { status: 400 }
+      )
+    }
+
     // Generate export file
-    const exportGenerator = new ExportGenerator()
     let exportContent: string | Buffer
 
     if (format === 'json') {
@@ -60,89 +67,89 @@ export async function POST(
       const exportData = {
         seeds: seeds.records,
         report: includeReport ? {
-          summary: seeds.metadata.summary,
-          coverage: seeds.metadata.coverage,
-          fieldMappings: labelResult.mappings,
-          validationResults: seeds.metadata.coverage.validationResults,
-          sourceFiles: seeds.metadata.sourceFiles,
-          validatedAt: seeds.metadata.validatedAt
+          summary: seeds.metadata?.summary || {},
+          coverage: seeds.metadata?.coverage || {},
+          fieldMappings: labelResult.mappings || [],
+          validationResults: seeds.metadata?.coverage?.validationResults || [],
+          sourceFiles: seeds.metadata?.sourceFiles || [],
+          validatedAt: seeds.metadata?.validatedAt || new Date().toISOString()
         } : undefined
       }
       exportContent = JSON.stringify(exportData, null, 2)
-    } else {
-      // For other formats, export just the records
-      // But append summary as comments/metadata where possible
+    } else if (format === 'csv') {
+      // Generate CSV manually
       const records = seeds.records
+      const headers = Object.keys(records[0])
+      const csvRows = [headers.join(',')]
       
-      if (format === 'csv') {
-        // Generate CSV manually
-        if (records.length === 0) {
-          exportContent = ''
-        } else {
-          const headers = Object.keys(records[0])
-          const csvRows = [headers.join(',')]
-          records.forEach(record => {
-            const values = headers.map(header => {
-              const value = record[header]
-              if (value === null || value === undefined) return ''
-              const stringValue = String(value)
-              if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
-                return `"${stringValue.replace(/"/g, '""')}"`
-              }
-              return stringValue
-            })
-            csvRows.push(values.join(','))
-          })
+      records.forEach(record => {
+        const values = headers.map(header => {
+          const value = record[header]
+          if (value === null || value === undefined) return ''
           
-          let csv = csvRows.join('\n')
-          if (includeReport) {
-            const report = generateSummaryReport(seeds.metadata.coverage, labelResult.mappings)
-            csv = `# Seed Dataset Export Summary\n# Generated: ${new Date().toISOString()}\n# Precision: ${Math.round(seeds.metadata.summary.precision * 100)}%\n# Field Coverage: ${Math.round(seeds.metadata.coverage.fieldCoverage.coveragePercentage)}%\n\n${report}\n\n# Data Records:\n${csv}`
-          }
-          exportContent = csv
-        }
-      } else {
-        // For other formats, we need to use a proper job ID
-        // For now, just convert records to the format
-        if (format === 'sql') {
-          const tableName = `seed_data_${schemaId.replace(/-/g, '_')}`
-          const headers = records.length > 0 ? Object.keys(records[0]) : []
-          
-          let sql = `-- Seed Dataset Export\n-- Generated: ${new Date().toISOString()}\n-- Records: ${records.length}\n\n`
-          sql += `CREATE TABLE IF NOT EXISTS ${tableName} (\n`
-          sql += `  id SERIAL PRIMARY KEY,\n`
-          sql += headers.map(h => `  ${h.replace(/[^a-zA-Z0-9_]/g, '_')} TEXT`).join(',\n')
-          sql += `\n);\n\n`
-          
-          if (records.length > 0) {
-            sql += `INSERT INTO ${tableName} (${headers.map(h => h.replace(/[^a-zA-Z0-9_]/g, '_')).join(', ')}) VALUES\n`
-            const values = records.map(record => {
-              const vals = headers.map(header => {
-                const value = record[header]
-                if (value === null || value === undefined) return 'NULL'
-                return `'${String(value).replace(/'/g, "''")}'`
-              })
-              return `  (${vals.join(', ')})`
-            })
-            sql += values.join(',\n') + ';'
+          // Handle arrays (e.g., multiple images)
+          let stringValue: string
+          if (Array.isArray(value)) {
+            stringValue = value.join('; ')
+          } else {
+            stringValue = String(value)
           }
           
-          exportContent = sql
-        } else {
-          // Default to JSON
-          exportContent = JSON.stringify({
-            seeds: records,
-            report: includeReport ? {
-              summary: seeds.metadata.summary,
-              coverage: seeds.metadata.coverage,
-              fieldMappings: labelResult.mappings,
-              validationResults: seeds.metadata.coverage.validationResults,
-              sourceFiles: seeds.metadata.sourceFiles,
-              validatedAt: seeds.metadata.validatedAt
-            } : undefined
-          }, null, 2)
-        }
+          // Escape CSV special characters
+          if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n') || stringValue.includes('\r')) {
+            return `"${stringValue.replace(/"/g, '""')}"`
+          }
+          return stringValue
+        })
+        csvRows.push(values.join(','))
+      })
+      
+      let csv = csvRows.join('\n')
+      if (includeReport && seeds.metadata) {
+        const report = generateSummaryReport(seeds.metadata.coverage || {}, labelResult.mappings || [])
+        csv = `# Seed Dataset Export Summary\n# Generated: ${new Date().toISOString()}\n# Precision: ${Math.round((seeds.metadata.summary?.precision || 0) * 100)}%\n# Field Coverage: ${Math.round((seeds.metadata.coverage?.fieldCoverage?.coveragePercentage || 0))}%\n\n${report}\n\n# Data Records:\n${csv}`
       }
+      exportContent = csv
+    } else if (format === 'sql') {
+      // Generate SQL export
+      const records = seeds.records
+      const tableName = `seed_data_${schemaId.replace(/-/g, '_')}`
+      const headers = Object.keys(records[0])
+      
+      let sql = `-- Seed Dataset Export\n-- Generated: ${new Date().toISOString()}\n-- Records: ${records.length}\n\n`
+      sql += `CREATE TABLE IF NOT EXISTS ${tableName} (\n`
+      sql += `  id SERIAL PRIMARY KEY,\n`
+      sql += headers.map(h => `  ${h.replace(/[^a-zA-Z0-9_]/g, '_')} TEXT`).join(',\n')
+      sql += `\n);\n\n`
+      
+      if (records.length > 0) {
+        sql += `INSERT INTO ${tableName} (${headers.map(h => h.replace(/[^a-zA-Z0-9_]/g, '_')).join(', ')}) VALUES\n`
+        const values = records.map(record => {
+          const vals = headers.map(header => {
+            const value = record[header]
+            if (value === null || value === undefined) return 'NULL'
+            const stringValue = Array.isArray(value) ? value.join('; ') : String(value)
+            return `'${stringValue.replace(/'/g, "''")}'`
+          })
+          return `  (${vals.join(', ')})`
+        })
+        sql += values.join(',\n') + ';'
+      }
+      
+      exportContent = sql
+    } else {
+      // Default to JSON for unknown formats
+      exportContent = JSON.stringify({
+        seeds: seeds.records,
+        report: includeReport ? {
+          summary: seeds.metadata?.summary || {},
+          coverage: seeds.metadata?.coverage || {},
+          fieldMappings: labelResult.mappings || [],
+          validationResults: seeds.metadata?.coverage?.validationResults || [],
+          sourceFiles: seeds.metadata?.sourceFiles || [],
+          validatedAt: seeds.metadata?.validatedAt || new Date().toISOString()
+        } : undefined
+      }, null, 2)
     }
 
     // Return export data
@@ -150,7 +157,9 @@ export async function POST(
       ? 'application/json' 
       : format === 'csv' 
         ? 'text/csv' 
-        : 'application/octet-stream'
+        : format === 'sql'
+          ? 'application/sql'
+          : 'application/octet-stream'
 
     return new NextResponse(exportContent, {
       headers: {

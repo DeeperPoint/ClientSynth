@@ -381,25 +381,59 @@ export class AILabelingEngine {
   }
 
   /**
-   * Check if field types are compatible
+   * Check if field types are compatible (allows flexible conversions)
    */
   private checkTypeCompatibility(extractedType: string, schemaType: string): boolean {
-    const typeMap: Record<string, string[]> = {
-      email: ['email'],
-      phone: ['phone'],
-      name: ['name', 'text'],
-      company: ['company', 'text'],
-      address: ['address', 'text'],
-      number: ['number'],
-      date: ['date'],
-      url: ['url'],
-      text: ['text', 'long_text']
+    // Exact match
+    if (extractedType === schemaType) return true
+
+    // Type conversion compatibility matrix
+    const compatibleTypes: Record<string, string[]> = {
+      text: ['text', 'long_text', 'name', 'company', 'address', 'job_title', 'number', 'email', 'phone', 'url', 'city', 'state', 'country', 'zip'], // text can convert to almost anything
+      number: ['number', 'text'], // number can be text
+      email: ['email', 'text', 'url'], // email is a special text/url
+      phone: ['phone', 'text'], // phone is special text
+      url: ['url', 'text'], // url is special text
+      name: ['name', 'text', 'first_name', 'last_name'], // name variations
+      company: ['company', 'text'], // company is text
+      address: ['address', 'text'], // address is text
+      date: ['date', 'text'], // date can be text
+      job_title: ['job_title', 'text'], // job_title is text
+      city: ['city', 'text'], // city is text
+      state: ['state', 'text'], // state is text
+      country: ['country', 'text'], // country is text
+      zip: ['zip', 'text', 'number'] // zip can be text or number
     }
 
-    const extracted = typeMap[extractedType] || ['text']
-    const schema = typeMap[schemaType] || ['text']
+    const extracted = compatibleTypes[extractedType] || ['text']
+    const schema = compatibleTypes[schemaType] || ['text']
     
-    return extracted.some(t => schema.includes(t))
+    // Check if types are compatible (bidirectional)
+    return extracted.some(t => schema.includes(t)) || schema.some(t => extracted.includes(t))
+  }
+
+  /**
+   * Check if types are truly incompatible (cannot be converted)
+   * Only flags truly incompatible types (e.g., email vs number, date vs boolean, image/pdf vs text types)
+   */
+  private isTypeIncompatible(extractedType: string, schemaType: string): boolean {
+    // If compatible, not incompatible
+    if (this.checkTypeCompatibility(extractedType, schemaType)) return false
+
+    // Define truly incompatible pairs (text can convert to almost anything, so exclude text-related)
+    const incompatiblePairs: Record<string, string[]> = {
+      email: ['number', 'boolean', 'date', 'image', 'pdf'], // email cannot be number/boolean/date/media
+      phone: ['email', 'url', 'boolean', 'date', 'image', 'pdf'], // phone cannot be email/url/boolean/date/media (but CAN be number or text)
+      number: ['email', 'url', 'boolean', 'image', 'pdf'], // number cannot be email/url/boolean/media (but CAN be text)
+      date: ['email', 'phone', 'url', 'boolean', 'image', 'pdf'], // date cannot be email/phone/url/boolean/media (but CAN be text)
+      boolean: ['email', 'phone', 'url', 'number', 'date', 'image', 'pdf'], // boolean cannot be most types (but CAN be text)
+      url: ['number', 'boolean', 'date', 'image', 'pdf'], // url cannot be number/boolean/date/media (but CAN be text/email)
+      image: ['email', 'phone', 'url', 'number', 'date', 'boolean', 'text', 'long_text', 'name', 'company', 'address', 'job_title'], // image is incompatible with text types
+      pdf: ['email', 'phone', 'url', 'number', 'date', 'boolean', 'text', 'long_text', 'name', 'company', 'address', 'job_title'] // pdf is incompatible with text types
+    }
+
+    const incompatible = incompatiblePairs[extractedType] || []
+    return incompatible.includes(schemaType)
   }
 
   /**
@@ -524,17 +558,21 @@ Return JSON array with validation results.`
       })
     }
 
-    // Validate type compatibility
+    // Validate type compatibility (only flag truly incompatible types)
     mappings.forEach((mapping) => {
       if (mapping.schemaField) {
         const schemaField = schemaFields.find(f => f.name === mapping.schemaField)
-        if (schemaField && !this.checkTypeCompatibility(mapping.extractedFieldType, schemaField.type)) {
-          if (!mapping.issues) {
-            mapping.issues = []
+        if (schemaField) {
+          // Only flag incompatible types (types that cannot be reasonably converted)
+          const isIncompatible = this.isTypeIncompatible(mapping.extractedFieldType, schemaField.type)
+          if (isIncompatible) {
+            if (!mapping.issues) {
+              mapping.issues = []
+            }
+            mapping.issues.push(
+              `Type mismatch: extracted field is "${mapping.extractedFieldType}" but schema field is "${schemaField.type}"`
+            )
           }
-          mapping.issues.push(
-            `Type mismatch: extracted field is "${mapping.extractedFieldType}" but schema field is "${schemaField.type}"`
-          )
         }
       }
     })
@@ -637,13 +675,19 @@ Return JSON array with validation results.`
       const recordsByRow = new Map<number, Record<string, any>>()
       
       file.data.forEach((item: any) => {
-        const rowIndex = item.rowIndex || 0
+        const rowIndex = item.row_index !== undefined ? item.row_index : (item.rowIndex !== undefined ? item.rowIndex : 0)
         if (!recordsByRow.has(rowIndex)) {
           recordsByRow.set(rowIndex, {})
         }
         
         const record = recordsByRow.get(rowIndex)!
-        record[item.fieldName] = item.value
+        // Support multiple field name formats
+        const fieldName = item.field_name || item.fieldName
+        const fieldValue = item.example_value !== undefined ? item.example_value : (item.value !== undefined ? item.value : item.exampleValue)
+        
+        if (fieldName && fieldValue !== undefined && fieldValue !== null) {
+          record[fieldName] = fieldValue
+        }
       })
 
       // Map to schema fields
