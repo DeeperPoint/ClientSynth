@@ -13,6 +13,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { ArrowLeft, Plus, Trash2, Save, AlertCircle } from "lucide-react"
 import { toast } from "sonner"
 import { ExampleFileUpload } from "@/components/example-file-upload"
+import { AILabelingMapping } from "@/components/ai-labeling-mapping"
 
 interface Field {
   id: string
@@ -664,6 +665,17 @@ export default function EditSchemaPage() {
           />
         </CardContent>
       </Card>
+
+      {/* AI Auto-Labeling & Schema Mapping */}
+      {fields.length > 0 && (
+        <AILabelingMapping
+          schemaId={schemaId}
+          onMappingComplete={(mappings, coverage) => {
+            console.log('Mapping complete:', { mappings, coverage })
+            toast.success(`Auto-labeling complete! Precision: ${Math.round(coverage.precision * 100)}%`)
+          }}
+        />
+      )}
 
       {/* Save Button (Bottom) */}
       <div className="flex justify-end gap-3">
