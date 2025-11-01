@@ -35,6 +35,17 @@ export interface FieldMapping {
 }
 
 export class UniversalFileParser {
+  private getBaseUrl(): string {
+    // In browser, relative path works
+    if (typeof window !== 'undefined') return ''
+    // In server, construct absolute URL
+    const envUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL
+    if (envUrl) {
+      const hasProtocol = envUrl.startsWith('http://') || envUrl.startsWith('https://')
+      return hasProtocol ? envUrl : `https://${envUrl}`
+    }
+    return 'http://localhost:3000'
+  }
   /**
    * Parse any file type and extract structured data
    */
@@ -88,7 +99,7 @@ export class UniversalFileParser {
     const formData = new FormData()
     formData.append('file', file)
     
-    const response = await fetch('/api/parse/pdf', {
+    const response = await fetch(`${this.getBaseUrl()}/api/parse/pdf`, {
       method: 'POST',
       body: formData
     })
@@ -109,7 +120,7 @@ export class UniversalFileParser {
     const formData = new FormData()
     formData.append('file', file)
     
-    const response = await fetch('/api/parse/docx', {
+    const response = await fetch(`${this.getBaseUrl()}/api/parse/docx`, {
       method: 'POST',
       body: formData
     })
@@ -123,11 +134,47 @@ export class UniversalFileParser {
   }
 
   /**
-   * Parse plain text files
+   * Parse plain text files with improved handling
    */
   private async parseTXT(file: File): Promise<ParsedFileData> {
-    const text = await file.text()
-    return this.extractFieldsFromText(text, file, 'txt')
+    try {
+      // Try to read as UTF-8 first
+      let text: string
+      try {
+        text = await file.text()
+      } catch (e) {
+        // Fallback: read as array buffer and decode with error handling
+        const buffer = await file.arrayBuffer()
+        const decoder = new TextDecoder('utf-8', { fatal: false })
+        text = decoder.decode(buffer)
+      }
+
+      // Validate text is not empty
+      if (!text || text.trim().length === 0) {
+        throw new Error('Text file is empty or contains no readable content')
+      }
+
+      // Check if text appears to be binary
+      const nullBytes = text.indexOf('\0')
+      if (nullBytes !== -1 && nullBytes < 100) {
+        throw new Error('File appears to be binary data, not text')
+      }
+
+      return this.extractFieldsFromText(text, file, 'txt')
+    } catch (error) {
+      console.error('[UniversalParser] TXT parse error:', error)
+      return {
+        success: false,
+        fields: [],
+        error: error instanceof Error ? error.message : 'Failed to parse text file',
+        metadata: {
+          fileType: 'txt',
+          fileSize: file.size,
+          recordCount: 0,
+          confidence: 0
+        }
+      }
+    }
   }
 
   /**
@@ -144,14 +191,19 @@ export class UniversalFileParser {
     const headers = this.parseCSVLine(lines[0])
     const fields: ExtractedField[] = []
 
-    // Parse data rows
+    // Parse data rows (skip header row at index 0)
     const records: Record<string, string[]> = {}
     for (const header of headers) {
       records[header] = []
     }
 
+    let dataRowCount = 0
     for (let i = 1; i < lines.length; i++) {
       const values = this.parseCSVLine(lines[i])
+      // Skip completely empty rows
+      if (values.every(v => !v || !v.trim())) continue
+      
+      dataRowCount++
       for (let j = 0; j < Math.min(headers.length, values.length); j++) {
         const value = values[j]?.trim()
         if (value) {
@@ -180,7 +232,7 @@ export class UniversalFileParser {
       metadata: {
         fileType: 'csv',
         fileSize: file.size,
-        recordCount: lines.length - 1,
+        recordCount: dataRowCount, // Count actual data rows, not including header
         confidence: 0.95
       }
     }
@@ -724,5 +776,6 @@ export class UniversalFileParser {
     return { valid: true }
   }
 }
+
 
 

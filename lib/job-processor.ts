@@ -64,6 +64,9 @@ export class JobProcessor {
   }
   private isPaused = false
   private isCancelled = false
+  
+  // Track generated values per field to enforce strict uniqueness
+  private generatedValuesPerField = new Map<string, Map<string, Set<string>>>()
 
   constructor() {
     console.log("[v0] JobProcessor constructor called")
@@ -426,16 +429,48 @@ export class JobProcessor {
       fields.map((f: any) => ({ name: f.name, type: f.type })),
     )
 
+    // Initialize field-level tracking for this job
+    const jobKey = job_id
+    this.generatedValuesPerField.set(jobKey, new Map())
+    fields.forEach((field: any) => {
+      this.generatedValuesPerField.get(jobKey)!.set(field.name, new Set())
+    })
+
+    // Load existing values from database to prevent duplicates
+    try {
+      const existing = await query(
+        `SELECT record_data FROM generated_data WHERE job_id = $1`,
+        [job_id]
+      )
+      existing.rows.forEach((row: any) => {
+        const record = row.record_data
+        fields.forEach((field: any) => {
+          if (record[field.name]) {
+            const valueSet = this.generatedValuesPerField.get(jobKey)!.get(field.name)
+            if (valueSet) {
+              valueSet.add(String(record[field.name]).toLowerCase().trim())
+            }
+          }
+        })
+      })
+      console.log(`[v0] Loaded ${existing.rows.length} existing records for duplicate prevention`)
+    } catch (e) {
+      console.warn('[v0] Failed to load existing records, starting fresh:', e)
+    }
+
     const batchSize = Math.min((config as any).batch_size || 5, 10)
     const recoveryState = this.getRecoveryState(job_id)
-    let generatedCount = recoveryState.lastSuccessfulRecord + 1
+    // Start from 0 if no records generated yet, otherwise continue from last successful + 1
+    let generatedCount = recoveryState.lastSuccessfulRecord === -1 ? 0 : recoveryState.lastSuccessfulRecord + 1
 
     console.log("[v0] Generation parameters:", {
       batchSize,
       startingFrom: generatedCount,
       totalRecords: total_records,
+      lastSuccessful: recoveryState.lastSuccessfulRecord
     })
 
+    // Generate exactly total_records records (indices 0 to total_records-1)
     for (let i = generatedCount; i < total_records; i += batchSize) {
       if (this.isCancelled) {
         console.log("[v0] Job generation cancelled")
@@ -457,8 +492,19 @@ export class JobProcessor {
       for (let recordIndex = i; recordIndex < batchEnd; recordIndex++) {
         try {
           console.log(`[v0] Generating record ${recordIndex + 1}/${total_records}`)
-          const record = await this.generateSingleRecordWithRetry(fields, recordIndex, job)
+          const record = await this.generateSingleRecordWithRetry(fields, recordIndex, job, jobKey)
           console.log(`[v0] Generated record ${recordIndex}:`, record)
+          
+          // Track generated values for duplicate checking
+          fields.forEach((field: any) => {
+            if (record[field.name]) {
+              const valueSet = this.generatedValuesPerField.get(jobKey)!.get(field.name)
+              if (valueSet) {
+                valueSet.add(String(record[field.name]).toLowerCase().trim())
+              }
+            }
+          })
+          
           batch.push(record)
 
           generatedCount++
@@ -486,7 +532,37 @@ export class JobProcessor {
 
       if (batch.length > 0) {
         console.log(`[v0] Saving batch of ${batch.length} records to database...`)
-        const recordsToInsert = batch.map((record, batchIndex) => ({
+        // De-duplicate within this job by record content to avoid duplicates
+        const stringifyRecord = (obj: any) => JSON.stringify(obj)
+        const batchHashes = new Set<string>()
+        const dedupedBatch = batch.filter((record) => {
+          const h = stringifyRecord(record)
+          if (batchHashes.has(h)) return false
+          batchHashes.add(h)
+          return true
+        })
+
+        // Fetch existing records for this job to prevent duplicates across batches
+        let existingHashes = new Set<string>()
+        try {
+          const existing = await query(
+            `SELECT record_data FROM generated_data WHERE job_id = $1`,
+            [job_id]
+          )
+          existing.rows.forEach((row: any) => {
+            existingHashes.add(stringifyRecord(row.record_data))
+          })
+        } catch (e) {
+          console.warn('[v0] Failed to fetch existing records for dedupe, proceeding without cross-batch dedupe')
+        }
+
+        const finalBatch = dedupedBatch.filter((record) => !existingHashes.has(stringifyRecord(record)))
+
+        if (finalBatch.length === 0) {
+          console.log('[v0] All records in this batch were duplicates; skipping insert')
+        }
+
+        const recordsToInsert = finalBatch.map((record, batchIndex) => ({
           job_id,
           tenant_id,
           record_data: record,
@@ -522,14 +598,35 @@ export class JobProcessor {
     fields: any[],
     recordIndex: number,
     job: JobData,
+    jobKey: string,
   ): Promise<GeneratedRecord> {
     const recoveryState = this.getRecoveryState(job.job_id)
     const retryKey = recordIndex.toString()
     const currentRetries = recoveryState.retryAttempts[retryKey] || 0
 
-    for (let attempt = 1; attempt <= this.retryConfig.maxRetries; attempt++) {
+    for (let attempt = 1; attempt <= this.retryConfig.maxRetries * 2; attempt++) {
       try {
-        const record = await this.generateSingleRecord(fields, recordIndex, job)
+        const record = await this.generateSingleRecord(fields, recordIndex, job, jobKey)
+        
+        // Check for field-level duplicates
+        let hasDuplicate = false
+        for (const field of fields) {
+          const fieldValue = String(record[field.name] || '').toLowerCase().trim()
+          if (fieldValue) {
+            const existingValues = this.generatedValuesPerField.get(jobKey)?.get(field.name)
+            if (existingValues && existingValues.has(fieldValue)) {
+              console.warn(`[v0] DUPLICATE DETECTED for field ${field.name}: ${fieldValue}`)
+              hasDuplicate = true
+              break
+            }
+          }
+        }
+        
+        if (hasDuplicate && attempt < this.retryConfig.maxRetries * 2) {
+          console.log(`[v0] Retrying record ${recordIndex} due to duplicate (attempt ${attempt})`)
+          await new Promise(resolve => setTimeout(resolve, 500 * attempt))
+          continue
+        }
 
         if (recoveryState.retryAttempts[retryKey]) {
           delete recoveryState.retryAttempts[retryKey]
@@ -561,9 +658,10 @@ export class JobProcessor {
     throw new Error(`Failed to generate record ${recordIndex} after ${this.retryConfig.maxRetries} attempts`)
   }
 
-  private async generateSingleRecord(fields: any[], recordIndex: number, job: JobData): Promise<GeneratedRecord> {
+  private async generateSingleRecord(fields: any[], recordIndex: number, job: JobData, jobKey: string): Promise<GeneratedRecord> {
     console.log(`[v0] Generating single record ${recordIndex}`)
     const record: GeneratedRecord = {}
+    const maxRetries = 5 // Maximum retries for required fields
 
     const textFields = fields.filter((field) => field.type !== "image")
     const imageFields = fields.filter((field) => field.type === "image")
@@ -571,78 +669,171 @@ export class JobProcessor {
     console.log(`[v0] Processing ${textFields.length} text fields and ${imageFields.length} image fields`)
 
     for (const field of textFields) {
-      console.log(`[v0] Generating field: ${field.name} (type: ${field.type})`)
+      console.log(`[v0] Generating field: ${field.name} (type: ${field.type}, required: ${field.required})`)
 
-      if (this.isPDFField(field.type)) {
-        console.log(`[v0] Using PDF generation for field: ${field.name}`)
-        console.log(`[v0] Job details - tenant_id: ${job.tenant_id}, job_id: ${job.job_id}`)
-        
-        // First, generate the PDF content using AI
-        const aiContext: GenerationContext = {
-          fieldType: field.type,
-          fieldName: field.name,
-          fieldDescription: field.description || `Generate a complete ${field.name}`,
-          recordIndex,
-          existingData: record,
-          tenantContext: job.tenant_id,
-          schemaId: job.schema_id,
-        }
-        
-        console.log(`[v0] Generating AI content for PDF field: ${field.name}`)
-        const pdfContent = await this.aiGenerator.generateFieldValue(aiContext)
-        console.log(`[v0] Generated PDF content (${pdfContent.length} chars)`)
-        
-        // Create a PDF directly from the AI-generated content
-        const { PDFGenerator } = await import('./pdf-generator')
-        const pdfGen = new PDFGenerator()
-        
-        const pdfResult = await pdfGen.createFromContent({
-          title: field.name || 'Generated Document',
-          content: pdfContent,
-          pageSize: 'A4',
-          marginMm: 20
-        })
-        
-        if (!pdfResult.success || !pdfResult.pdfBase64) {
-          throw new Error(pdfResult.error || 'PDF creation failed')
-        }
-        
-        console.log(`[v0] PDF created successfully, uploading to S3...`)
-        
-        // Upload the PDF to S3
-        const filename = `record_${recordIndex}_${field.name}.pdf`
-        console.log(`[v0] Uploading PDF with: tenantId=${job.tenant_id}, jobId=${job.job_id}, filename=${filename}`)
-        
-        const s3Result = await pdfGen.uploadPDFToS3(
-          pdfResult.pdfBase64,
-          job.tenant_id,
-          job.job_id,
-          filename
-        )
-        record[field.name] = s3Result.url
-        console.log(`[v0] PDF uploaded successfully for ${field.name}:`, s3Result.url)
-        console.log(`[v0] S3 Key:`, s3Result.s3Key)
-      } else {
-        const context: GenerationContext = {
-          fieldType: field.type,
-          fieldName: field.name,
-          fieldDescription: field.description,
-          recordIndex,
-          existingData: record,
-          tenantContext: job.tenant_id,
-          schemaId: job.schema_id,
-        }
+      let fieldValue: any = null
+      let attempts = 0
+      const existingValues = this.generatedValuesPerField.get(jobKey)?.get(field.name) || new Set<string>()
 
-        if (this.shouldUseAI(field.type)) {
-          console.log(`[v0] Using AI generation for field: ${field.name}`)
-          record[field.name] = await this.aiGenerator.generateFieldValue(context)
-          console.log(`[v0] AI generated for ${field.name}:`, record[field.name])
-        } else {
-          console.log(`[v0] Using fallback generation for field: ${field.name}`)
-          record[field.name] = await this.generateFieldValue(field, recordIndex)
-          console.log(`[v0] Fallback generated for ${field.name}:`, record[field.name])
+      // Retry loop for required fields to ensure they're never empty AND unique
+      while ((!fieldValue || fieldValue.toString().trim().length === 0 || existingValues.has(String(fieldValue).toLowerCase().trim())) && attempts < maxRetries) {
+        attempts++
+        try {
+          if (this.isPDFField(field.type)) {
+            console.log(`[v0] Using PDF generation for field: ${field.name}`)
+            console.log(`[v0] Job details - tenant_id: ${job.tenant_id}, job_id: ${job.job_id}`)
+            
+            // First, generate the PDF content using AI
+            const aiContext: GenerationContext = {
+              fieldType: field.type,
+              fieldName: field.name,
+              fieldDescription: field.description || `Generate a complete ${field.name}`,
+              recordIndex,
+              existingData: record,
+              tenantContext: job.tenant_id,
+              schemaId: job.schema_id,
+            }
+            
+            // Pass previously generated values for uniqueness
+            const pdfExistingValues = this.generatedValuesPerField.get(jobKey)?.get(field.name) || new Set<string>()
+            const previousPdfValues = Array.from(pdfExistingValues).slice(-20)
+            aiContext.previouslyGeneratedValues = previousPdfValues
+            
+            console.log(`[v0] Generating AI content for PDF field: ${field.name}`)
+            const pdfContent = await this.aiGenerator.generateFieldValue(aiContext, attempts - 1)
+            
+            // Validate PDF content is not empty
+            if (!pdfContent || pdfContent.trim().length === 0) {
+              throw new Error(`Generated empty PDF content for field ${field.name}`)
+            }
+            
+            console.log(`[v0] Generated PDF content (${pdfContent.length} chars)`)
+            
+            // Create a PDF directly from the AI-generated content
+            const { PDFGenerator } = await import('./pdf-generator')
+            const pdfGen = new PDFGenerator()
+            
+            const pdfResult = await pdfGen.createFromContent({
+              title: field.name || 'Generated Document',
+              content: pdfContent,
+              pageSize: 'A4',
+              marginMm: 20
+            })
+            
+            if (!pdfResult.success || !pdfResult.pdfBase64) {
+              throw new Error(pdfResult.error || 'PDF creation failed')
+            }
+            
+            console.log(`[v0] PDF created successfully, uploading to S3...`)
+            
+            // Upload the PDF to S3
+            const filename = `record_${recordIndex}_${field.name}_${Date.now()}.pdf` // Add timestamp for uniqueness
+            console.log(`[v0] Uploading PDF with: tenantId=${job.tenant_id}, jobId=${job.job_id}, filename=${filename}`)
+            
+            const s3Result = await pdfGen.uploadPDFToS3(
+              pdfResult.pdfBase64,
+              job.tenant_id,
+              job.job_id,
+              filename
+            )
+            
+            if (!s3Result.url || s3Result.url.trim().length === 0) {
+              throw new Error(`Failed to get S3 URL for PDF field ${field.name}`)
+            }
+            
+            // Check for duplicate PDF URLs (though unlikely due to timestamps)
+            const normalizedUrl = s3Result.url.toLowerCase().trim()
+            if (existingValues.has(normalizedUrl)) {
+              console.warn(`[v0] Duplicate PDF URL detected, retrying...`)
+              throw new Error(`Generated duplicate PDF URL for field ${field.name}`)
+            }
+            
+            fieldValue = s3Result.url
+            console.log(`[v0] PDF uploaded successfully for ${field.name}:`, s3Result.url)
+            console.log(`[v0] S3 Key:`, s3Result.s3Key)
+          } else {
+            const context: GenerationContext = {
+              fieldType: field.type,
+              fieldName: field.name,
+              fieldDescription: field.description,
+              recordIndex,
+              existingData: record,
+              tenantContext: job.tenant_id,
+              schemaId: job.schema_id,
+            }
+
+            if (this.shouldUseAI(field.type)) {
+              console.log(`[v0] Using AI generation for field: ${field.name} (attempt ${attempts})`)
+              
+              // Pass previously generated values to AI to avoid duplicates
+              const previousValues = Array.from(existingValues).slice(-20) // Last 20 values to avoid
+              context.previouslyGeneratedValues = previousValues
+              
+              fieldValue = await this.aiGenerator.generateFieldValue(context, attempts - 1)
+              
+              // Validate AI-generated value
+              if (!fieldValue || String(fieldValue).trim().length === 0) {
+                throw new Error(`AI generated empty value for required field ${field.name}`)
+              }
+              
+              // Check for duplicate
+              const normalizedValue = String(fieldValue).toLowerCase().trim()
+              if (existingValues.has(normalizedValue)) {
+                console.warn(`[v0] AI generated duplicate value for ${field.name}: ${fieldValue}`)
+                throw new Error(`Generated duplicate value for field ${field.name}`)
+              }
+              
+              console.log(`[v0] AI generated for ${field.name}:`, fieldValue)
+            } else {
+              console.log(`[v0] Using fallback generation for field: ${field.name}`)
+              fieldValue = await this.generateFieldValue(field, recordIndex, existingValues)
+              
+              // Check for duplicate in fallback generation
+              const normalizedFallbackValue = String(fieldValue).toLowerCase().trim()
+              if (existingValues.has(normalizedFallbackValue)) {
+                console.warn(`[v0] Fallback generated duplicate value, adding variation...`)
+                // Add variation to make it unique
+                fieldValue = `${fieldValue}_${recordIndex}_${Date.now()}`
+                const newNormalized = String(fieldValue).toLowerCase().trim()
+                if (existingValues.has(newNormalized)) {
+                  throw new Error(`Fallback generated duplicate value for field ${field.name} even with variation`)
+                }
+              }
+              
+              console.log(`[v0] Fallback generated for ${field.name}:`, fieldValue)
+            }
+          }
+        } catch (error) {
+          console.warn(`[v0] Attempt ${attempts} failed for field ${field.name}:`, error)
+          if (attempts >= maxRetries) {
+            throw new Error(`Failed to generate value for field ${field.name} after ${maxRetries} attempts: ${error instanceof Error ? error.message : 'Unknown error'}`)
+          }
+          // Wait before retry
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempts))
         }
       }
+
+      // Final validation for required fields
+      if (field.required) {
+        if (!fieldValue || String(fieldValue).trim().length === 0) {
+          throw new Error(`Required field ${field.name} is empty after all generation attempts`)
+        }
+      }
+
+      // Validate field value is not a JSON error message
+      const valueStr = String(fieldValue)
+      if (valueStr.toLowerCase().includes('error') && 
+          (valueStr.toLowerCase().includes('parsing') || 
+           valueStr.toLowerCase().includes('invalid') ||
+           valueStr.toLowerCase().includes('failed'))) {
+        console.warn(`[v0] Detected error message in field ${field.name}, regenerating...`)
+        if (attempts < maxRetries) {
+          continue // Retry
+        }
+        throw new Error(`Field ${field.name} contains error message: ${valueStr}`)
+      }
+
+      record[field.name] = fieldValue
     }
 
     if (job.config.enable_images !== false && imageFields.length > 0) {
@@ -650,9 +841,42 @@ export class JobProcessor {
 
       for (const field of imageFields) {
         console.log(`[v0] Generating AI image for field: ${field.name}`)
-        const imageUrl = await this.generateAIImage(field, record, recordIndex, job)
-        record[field.name] = imageUrl
-        console.log(`[v0] Generated image URL for ${field.name}:`, imageUrl)
+        let imageResult: string | string[] | null = null
+        let attempts = 0
+        
+        while ((!imageResult || (Array.isArray(imageResult) ? imageResult.length === 0 : imageResult.trim().length === 0)) && attempts < maxRetries) {
+          attempts++
+          try {
+            imageResult = await this.generateAIImage(field, record, recordIndex, job)
+            
+            if (!imageResult || (Array.isArray(imageResult) ? imageResult.length === 0 : imageResult.trim().length === 0)) {
+              throw new Error(`Generated empty image URL(s) for field ${field.name}`)
+            }
+            
+            // Store as array if multiple images, single value if one image
+            record[field.name] = imageResult
+            const imageCount = Array.isArray(imageResult) ? imageResult.length : 1
+            console.log(`[v0] Generated ${imageCount} image URL(s) for ${field.name}:`, Array.isArray(imageResult) ? imageResult.join(', ') : imageResult)
+            break
+          } catch (error) {
+            console.warn(`[v0] Image generation attempt ${attempts} failed for ${field.name}:`, error)
+            if (attempts >= maxRetries) {
+              if (field.required) {
+                throw new Error(`Required image field ${field.name} failed after ${maxRetries} attempts`)
+              }
+              // For non-required fields, continue without image
+              break
+            }
+            await new Promise(resolve => setTimeout(resolve, 2000 * attempts))
+          }
+        }
+      }
+    }
+
+    // Final validation - ensure all required fields have values
+    for (const field of fields) {
+      if (field.required && (!record[field.name] || String(record[field.name]).trim().length === 0)) {
+        throw new Error(`Required field ${field.name} is missing or empty in final record`)
       }
     }
 
@@ -665,64 +889,96 @@ export class JobProcessor {
     recordData: Record<string, any>,
     recordIndex: number,
     job: JobData,
-  ): Promise<string> {
+  ): Promise<string | string[]> {
     const imagesPerRecord = job.config.images_per_record || 1
     const imageModel = job.config.image_model || "google/gemini-2.5-flash-image-preview"
 
-    const contextPrompt = this.buildImagePrompt(field, recordData)
+    const contextPrompt = this.buildImagePrompt(field, recordData, recordIndex)
 
     console.log(
       `[v0][SERVER][JobProcessor] Generating ${imagesPerRecord} image(s) for ${field.name} using ${imageModel}`,
     )
 
-    const imageResult = await this.imageGenerator.generateAndUploadImage({
-      tenantId: job.tenant_id,
-      jobId: job.job_id,
-      recordId: `record_${recordIndex}`,
-      fieldName: field.name,
-      prompt: contextPrompt,
-      recordData,
-      fieldDescription: field.description,
+    const imageUrls: string[] = []
+    const baseRecordId = `record_${recordIndex}`
+
+    // Generate multiple images if imagesPerRecord > 1
+    for (let imgIndex = 0; imgIndex < imagesPerRecord; imgIndex++) {
+      try {
+        const uniqueRecordId = `${baseRecordId}_img${imgIndex}_${Date.now()}`
+        
+        console.log(`[v0][SERVER][JobProcessor] Generating image ${imgIndex + 1}/${imagesPerRecord} for ${field.name}`)
+
+        const imageResult = await this.imageGenerator.generateAndUploadImage({
+          tenantId: job.tenant_id,
+          jobId: job.job_id,
+          recordId: uniqueRecordId,
+          fieldName: field.name,
+          prompt: contextPrompt,
+          recordData,
+          fieldDescription: field.description,
+          model: imageModel,
+          count: 1, // Generate one at a time to get individual URLs
+        })
+
+        // Store each image in media table
+        await query(`
+          INSERT INTO media (
+            tenant_id, job_id, record_id, field_name, s3_key, s3_url, 
+            content_type, file_size, md5_hash, model_used, prompt_used, generation_metadata
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        `, [
+          job.tenant_id,
+          job.job_id,
+          baseRecordId,
+          field.name,
+          imageResult.s3Key,
+          imageResult.url,
+          "image/png",
+          imageResult.fileSize || 0,
+          imageResult.md5Hash || "",
+          imageModel,
+          contextPrompt,
+          JSON.stringify({
+            recordData: recordData,
+            fieldDescription: field.description,
+            imageIndex: imgIndex,
+            imagesPerRecord,
+            generationTime: new Date().toISOString(),
+          })
+        ])
+
+        imageUrls.push(imageResult.url)
+        console.log(`[v0][SERVER][JobProcessor] Generated image ${imgIndex + 1}/${imagesPerRecord}: ${imageResult.url}`)
+
+        // Small delay between image generations to avoid rate limits
+        if (imgIndex < imagesPerRecord - 1) {
+          await new Promise(resolve => setTimeout(resolve, 500))
+        }
+      } catch (error) {
+        console.error(`[v0][SERVER][JobProcessor] Failed to generate image ${imgIndex + 1}/${imagesPerRecord}:`, error)
+        // If it's a required field and we haven't generated any images, throw error
+        if (imgIndex === 0) {
+          throw error
+        }
+        // Otherwise, continue with the images we have
+        break
+      }
+    }
+
+    await this.logJobMessage(job.job_id, "info", `Generated ${imageUrls.length} AI image(s) for field: ${field.name}`, {
       model: imageModel,
-      count: imagesPerRecord,
+      imageCount: imageUrls.length,
+      prompt: contextPrompt,
     })
 
-    await query(`
-      INSERT INTO media (
-        tenant_id, job_id, record_id, field_name, s3_key, s3_url, 
-        content_type, file_size, md5_hash, model_used, prompt_used, generation_metadata
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-    `, [
-      job.tenant_id,
-      job.job_id,
-      `record_${recordIndex}`,
-      field.name,
-      imageResult.s3Key,
-      imageResult.url,
-      "image/png",
-      imageResult.fileSize || 0,
-      imageResult.md5Hash || "",
-      imageModel,
-      contextPrompt,
-      JSON.stringify({
-        recordData: recordData,
-        fieldDescription: field.description,
-        imagesPerRecord,
-        generationTime: new Date().toISOString(),
-      })
-    ])
-
-    await this.logJobMessage(job.job_id, "info", `Generated AI image for field: ${field.name}`, {
-      model: imageModel,
-      s3Key: imageResult.s3Key,
-      prompt: contextPrompt,
-    })
-
-    return imageResult.url
+    // Return single URL if count is 1, array if count > 1
+    return imagesPerRecord === 1 ? imageUrls[0] : imageUrls
   }
 
-  private buildImagePrompt(field: any, recordData: Record<string, any>): string {
-    const basePrompt = field.config?.prompt || field.description || "Professional headshot photo"
+  private buildImagePrompt(field: any, recordData: Record<string, any>, recordIndex: number = 0): string {
+    // Pay more attention to field description - use it as the primary prompt if available
+    const basePrompt = field.description || field.config?.prompt || "Professional headshot photo"
 
     const contextParts = []
 
@@ -745,7 +1001,8 @@ export class JobProcessor {
 
     const contextString = contextParts.length > 0 ? ` of ${contextParts.join(", ")}` : ""
 
-    return `${basePrompt}${contextString}. Professional, high-quality, realistic photo.`
+    // Add variation instruction to prevent duplicate images
+    return `${basePrompt}${contextString}. Professional, high-quality, realistic photo. This is record #${recordIndex + 1}, generate a UNIQUE image that is different from all previous images. Use different lighting, pose, background, or composition.`
   }
 
   private async getCurrentJob(): Promise<JobData | null> {
@@ -782,150 +1039,210 @@ export class JobProcessor {
     return fieldType.toLowerCase() === 'pdf'
   }
 
-  private async generateFieldValue(field: any, recordIndex: number): Promise<any> {
+  private async generateFieldValue(field: any, recordIndex: number, existingValues?: Set<string>): Promise<any> {
     const { type, name } = field
 
     switch (type) {
       case "name":
-        return this.generateName(recordIndex)
+        return this.generateName(recordIndex, existingValues)
       case "email":
-        return this.generateEmail(recordIndex)
+        return this.generateEmail(recordIndex, existingValues)
       case "phone":
-        return this.generatePhone()
+        return this.generatePhone(existingValues)
       case "company":
-        return this.generateCompany(recordIndex)
+        return this.generateCompany(recordIndex, existingValues)
       case "address":
-        return this.generateAddress(recordIndex)
+        return this.generateAddress(recordIndex, existingValues)
       case "city":
-        return this.generateCity(recordIndex)
+        return this.generateCity(recordIndex, existingValues)
       case "country":
-        return this.generateCountry()
+        return this.generateCountry(existingValues)
       case "job_title":
-        return this.generateJobTitle(recordIndex)
+        return this.generateJobTitle(recordIndex, existingValues)
       case "industry":
-        return this.generateIndustry()
+        return this.generateIndustry(existingValues)
       case "number":
-        return Math.floor(Math.random() * 1000) + 1
+        // Generate unique number without trailing underscore suffix
+        // Use a combination of random number and record index in a way that doesn't add visible suffix
+        const baseNumber = Math.floor(Math.random() * 1000) + 1
+        const uniqueOffset = recordIndex * 7 // Small multiplier for uniqueness
+        return baseNumber + uniqueOffset
       case "date":
-        return this.generateDate()
+        // For dates, add slight variation based on record index
+        return this.generateDate(recordIndex)
       case "boolean":
         return Math.random() > 0.5
       default:
-        return `Sample ${name} ${recordIndex + 1}`
+        return `Sample ${name} ${recordIndex + 1}_${Date.now()}`
     }
   }
 
-  private generateName(index: number): string {
-    const firstNames = ["John", "Jane", "Michael", "Sarah", "David", "Emily", "Robert", "Lisa", "James", "Maria"]
+  private generateName(index: number, existingValues?: Set<string>): string {
+    const firstNames = ["John", "Jane", "Michael", "Sarah", "David", "Emily", "Robert", "Lisa", "James", "Maria", "William", "Jessica", "Christopher", "Ashley", "Daniel", "Amanda", "Matthew", "Michelle", "Anthony", "Stephanie"]
     const lastNames = [
-      "Smith",
-      "Johnson",
-      "Williams",
-      "Brown",
-      "Jones",
-      "Garcia",
-      "Miller",
-      "Davis",
-      "Rodriguez",
-      "Martinez",
+      "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez",
+      "Wilson", "Anderson", "Taylor", "Thomas", "Hernandez", "Moore", "Martin", "Jackson", "Thompson", "White"
     ]
 
+    // Try to generate unique name
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const firstNameIdx = (index * 3 + attempt) % firstNames.length
+      const lastNameIdx = (index * 7 + attempt) % lastNames.length
+      const name = `${firstNames[firstNameIdx]} ${lastNames[lastNameIdx]}`
+      
+      if (!existingValues || !existingValues.has(name.toLowerCase())) {
+        return name
+      }
+    }
+    
+    // Fallback with index-based uniqueness
     const firstName = firstNames[index % firstNames.length]
-    const lastName = lastNames[Math.floor(index / firstNames.length) % lastNames.length]
-
+    const lastName = `${lastNames[Math.floor(index / firstNames.length) % lastNames.length]}${index}`
     return `${firstName} ${lastName}`
   }
 
-  private generateEmail(index: number): string {
-    const domains = ["gmail.com", "yahoo.com", "hotmail.com", "company.com", "business.org"]
-    const name = this.generateName(index).toLowerCase().replace(" ", ".")
+  private generateEmail(index: number, existingValues?: Set<string>): string {
+    const domains = ["gmail.com", "yahoo.com", "hotmail.com", "company.com", "business.org", "outlook.com", "protonmail.com", "icloud.com"]
+    const name = this.generateName(index).toLowerCase().replace(/\s+/g, ".")
+    
+    // Try unique email
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const domain = domains[(index + attempt) % domains.length]
+      const email = `${name}.${index}.${attempt}@${domain}`
+      if (!existingValues || !existingValues.has(email.toLowerCase())) {
+        return email
+      }
+    }
+    
+    // Fallback
     const domain = domains[index % domains.length]
-
-    return `${name}${index}@${domain}`
+    return `${name}.${index}.${Date.now()}@${domain}`
   }
 
-  private generatePhone(): string {
+  private generatePhone(existingValues?: Set<string>): string {
+    // Generate unique phone number
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const areaCode = 200 + (Math.floor(Math.random() * 800) + attempt) % 800
+      const exchange = 200 + (Math.floor(Math.random() * 800) + attempt) % 800
+      const number = 1000 + (Math.floor(Math.random() * 9000) + attempt) % 9000
+      const phone = `(${areaCode}) ${exchange}-${number}`
+      
+      if (!existingValues || !existingValues.has(phone.toLowerCase())) {
+        return phone
+      }
+    }
+    
+    // Fallback
     const areaCode = Math.floor(Math.random() * 900) + 100
     const exchange = Math.floor(Math.random() * 900) + 100
     const number = Math.floor(Math.random() * 9000) + 1000
-
     return `(${areaCode}) ${exchange}-${number}`
   }
 
-  private generateCompany(index: number): string {
-    const prefixes = ["Tech", "Global", "Advanced", "Premier", "Dynamic", "Innovative", "Strategic", "Digital"]
-    const suffixes = ["Solutions", "Systems", "Corp", "Industries", "Group", "Enterprises", "Partners", "Technologies"]
+  private generateCompany(index: number, existingValues?: Set<string>): string {
+    const prefixes = ["Tech", "Global", "Advanced", "Premier", "Dynamic", "Innovative", "Strategic", "Digital", "Modern", "Elite", "Progressive", "Smart"]
+    const suffixes = ["Solutions", "Systems", "Corp", "Industries", "Group", "Enterprises", "Partners", "Technologies", "Services", "Consulting", "Ventures", "Holdings"]
 
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const prefixIdx = (index * 2 + attempt) % prefixes.length
+      const suffixIdx = (index * 3 + attempt) % suffixes.length
+      const company = `${prefixes[prefixIdx]} ${suffixes[suffixIdx]}`
+      
+      if (!existingValues || !existingValues.has(company.toLowerCase())) {
+        return company
+      }
+    }
+    
+    // Fallback
     const prefix = prefixes[index % prefixes.length]
-    const suffix = suffixes[Math.floor(index / prefixes.length) % suffixes.length]
-
+    const suffix = `${suffixes[Math.floor(index / prefixes.length) % suffixes.length]} ${index}`
     return `${prefix} ${suffix}`
   }
 
-  private generateAddress(index: number): string {
-    const streetNumbers = [123, 456, 789, 101, 202, 303, 404, 505]
-    const streetNames = ["Main St", "Oak Ave", "Pine Rd", "Elm Dr", "Cedar Ln", "Maple Way", "Park Blvd", "First St"]
+  private generateAddress(index: number, existingValues?: Set<string>): string {
+    const streetNumbers = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200]
+    const streetNames = ["Main St", "Oak Ave", "Pine Rd", "Elm Dr", "Cedar Ln", "Maple Way", "Park Blvd", "First St", "Second Ave", "Third St", "Broadway", "Market St"]
 
-    const number = streetNumbers[index % streetNumbers.length]
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const number = streetNumbers[(index + attempt) % streetNumbers.length]
+      const street = streetNames[(index * 2 + attempt) % streetNames.length]
+      const address = `${number + attempt} ${street}`
+      
+      if (!existingValues || !existingValues.has(address.toLowerCase())) {
+        return address
+      }
+    }
+    
+    // Fallback
+    const number = streetNumbers[index % streetNumbers.length] + index
     const street = streetNames[Math.floor(index / streetNumbers.length) % streetNames.length]
-
     return `${number} ${street}`
   }
 
-  private generateCity(index: number): string {
+  private generateCity(index: number, existingValues?: Set<string>): string {
     const cities = [
-      "New York",
-      "Los Angeles",
-      "Chicago",
-      "Houston",
-      "Phoenix",
-      "Philadelphia",
-      "San Antonio",
-      "San Diego",
-      "Dallas",
-      "San Jose",
+      "New York", "Los Angeles", "Chicago", "Houston", "Phoenix", "Philadelphia", "San Antonio", "San Diego", "Dallas", "San Jose",
+      "Austin", "Jacksonville", "Fort Worth", "Columbus", "Charlotte", "San Francisco", "Indianapolis", "Seattle", "Denver", "Washington"
     ]
-    return cities[index % cities.length]
+    
+    const city = cities[index % cities.length]
+    if (!existingValues || !existingValues.has(city.toLowerCase())) {
+      return city
+    }
+    
+    // If duplicate, try next city
+    return cities[(index + 1) % cities.length]
   }
 
-  private generateCountry(): string {
-    const countries = ["United States", "Canada", "United Kingdom", "Germany", "France", "Australia", "Japan", "Brazil"]
-    return countries[Math.floor(Math.random() * countries.length)]
+  private generateCountry(existingValues?: Set<string>): string {
+    const countries = ["United States", "Canada", "United Kingdom", "Germany", "France", "Australia", "Japan", "Brazil", "Mexico", "Italy", "Spain", "Netherlands"]
+    const country = countries[Math.floor(Math.random() * countries.length)]
+    
+    if (!existingValues || !existingValues.has(country.toLowerCase())) {
+      return country
+    }
+    
+    // If duplicate, try another
+    return countries[(Math.floor(Math.random() * countries.length) + 1) % countries.length]
   }
 
-  private generateJobTitle(index: number): string {
+  private generateJobTitle(index: number, existingValues?: Set<string>): string {
     const titles = [
-      "Software Engineer",
-      "Marketing Manager",
-      "Sales Director",
-      "Product Manager",
-      "Data Analyst",
-      "UX Designer",
-      "Operations Manager",
-      "Financial Analyst",
+      "Software Engineer", "Marketing Manager", "Sales Director", "Product Manager", "Data Analyst", "UX Designer", "Operations Manager", "Financial Analyst",
+      "Project Manager", "Business Analyst", "HR Manager", "Account Executive", "Content Manager", "DevOps Engineer", "Security Analyst", "Research Scientist"
     ]
-    return titles[index % titles.length]
+    
+    const title = titles[index % titles.length]
+    if (!existingValues || !existingValues.has(title.toLowerCase())) {
+      return title
+    }
+    
+    // If duplicate, try next
+    return titles[(index + 1) % titles.length]
   }
 
-  private generateIndustry(): string {
+  private generateIndustry(existingValues?: Set<string>): string {
     const industries = [
-      "Technology",
-      "Healthcare",
-      "Finance",
-      "Education",
-      "Manufacturing",
-      "Retail",
-      "Consulting",
-      "Media",
+      "Technology", "Healthcare", "Finance", "Education", "Manufacturing", "Retail", "Consulting", "Media",
+      "Energy", "Transportation", "Real Estate", "Agriculture", "Hospitality", "Telecommunications", "Aerospace", "Pharmaceuticals"
     ]
-    return industries[Math.floor(Math.random() * industries.length)]
+    const industry = industries[Math.floor(Math.random() * industries.length)]
+    
+    if (!existingValues || !existingValues.has(industry.toLowerCase())) {
+      return industry
+    }
+    
+    // If duplicate, try another
+    return industries[(Math.floor(Math.random() * industries.length) + 1) % industries.length]
   }
 
-  private generateDate(): string {
+  private generateDate(recordIndex: number = 0): string {
+    // Add variation based on record index to ensure uniqueness
+    const daysOffset = recordIndex * 3 // Each record gets a date 3 days apart
     const start = new Date(1990, 0, 1)
-    const end = new Date()
-    const randomDate = new Date(start.getTime() + Math.random() * (end.getTime() - start.getTime()))
-    return randomDate.toISOString().split("T")[0]
+    const baseDate = new Date(start.getTime() + Math.random() * ((new Date().getTime() - start.getTime())))
+    const uniqueDate = new Date(baseDate.getTime() + (daysOffset * 24 * 60 * 60 * 1000))
+    return uniqueDate.toISOString().split("T")[0]
   }
 
   private async logJobMessage(jobId: string, level: string, message: string, metadata: any = {}): Promise<void> {
@@ -949,3 +1266,4 @@ export class JobProcessor {
     }
   }
 }
+

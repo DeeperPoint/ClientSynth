@@ -22,37 +22,47 @@ import {
   FileCode,
   File
 } from 'lucide-react'
-import { UniversalFileParser, type ParsedFileData } from '@/lib/universal-file-parser'
+import { UniversalFileParser, type ParsedFileData, type ExtractedField } from '@/lib/universal-file-parser'
+import { FieldExtractionSummary } from '@/components/field-extraction-summary'
 
 interface BulkUploadFile {
   id: string
   file: File
-  status: 'pending' | 'processing' | 'completed' | 'failed'
+  status: 'pending' | 'validating' | 'parsing' | 'extracting' | 'completed' | 'failed'
   progress: number
   error?: string
   parsedData?: ParsedFileData
   uploadResult?: any
+  validationStatus?: 'validating' | 'valid' | 'invalid'
 }
 
 interface ExampleFileUploadProps {
-  schemaId: string
+  schemaId?: string
   schemaFields: Array<{ name: string; type: string; description?: string }>
   onUploadComplete?: () => void
   onFieldsAdded?: (newFields: Array<{ name: string; type: string; description: string }>) => void
+  onUploadSummary?: (summary: { batchId?: string; totalFiles: number; completedFiles: number; failedFiles: number; results: Array<{ fileId: string; fileName: string; status: 'success' | 'failed'; parsedFields?: number; recordCount?: number }> }) => void
+  onSchemaRefresh?: () => Promise<void> | void // Callback to refresh schema fields
 }
 
 export function ExampleFileUpload({ 
   schemaId, 
   schemaFields, 
   onUploadComplete,
-  onFieldsAdded 
-}: ExampleFileUploadProps) {
+  onFieldsAdded,
+  onUploadSummary,
+  ensureSchemaId,
+  onSchemaRefresh
+}: ExampleFileUploadProps & { ensureSchemaId?: () => Promise<string> }) {
   const [files, setFiles] = useState<BulkUploadFile[]>([])
   const [isDragActive, setIsDragActive] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [uploadResults, setUploadResults] = useState<any>(null)
+  const [showFieldSummary, setShowFieldSummary] = useState(false)
+  const [allExtractedFields, setAllExtractedFields] = useState<ExtractedField[]>([])
+  const [fieldSelections, setFieldSelections] = useState<Record<string, any>>({})
   const fileInputRef = useRef<HTMLInputElement>(null)
   const parser = new UniversalFileParser()
 
@@ -150,16 +160,90 @@ export function ExampleFileUpload({
       return
     }
 
-    // Add files to state
+    // Add files to state and start validation/parsing
     const newFiles: BulkUploadFile[] = validFiles.map(file => ({
       id: crypto.randomUUID(),
       file,
-      status: 'pending',
-      progress: 0
+      status: 'validating',
+      progress: 0,
+      validationStatus: 'validating'
     }))
 
     setFiles(prev => [...prev, ...newFiles])
+    
+    // Process files to extract fields
+    processFilesForExtraction(newFiles)
   }, [files.length])
+
+  const processFilesForExtraction = async (filesToProcess: BulkUploadFile[]) => {
+    const allFields: ExtractedField[] = []
+    
+    for (const fileObj of filesToProcess) {
+      try {
+        // Update status to parsing
+        setFiles(prev => prev.map(f => 
+          f.id === fileObj.id 
+            ? { ...f, status: 'parsing', progress: 30, validationStatus: 'valid' }
+            : f
+        ))
+
+        // Parse file to extract fields
+        const parseResult = await parser.parseFile(fileObj.file)
+        
+        if (parseResult.success) {
+          // Merge fields (avoid duplicates)
+          parseResult.fields.forEach(field => {
+            const existing = allFields.find(f => 
+              f.fieldName.toLowerCase() === field.fieldName.toLowerCase()
+            )
+            if (!existing) {
+              allFields.push(field)
+            } else {
+              // Merge example values
+              existing.exampleValues.push(...field.exampleValues.slice(0, 5))
+              existing.exampleValues = [...new Set(existing.exampleValues)].slice(0, 10)
+            }
+          })
+
+          setFiles(prev => prev.map(f => 
+            f.id === fileObj.id 
+              ? { ...f, status: 'extracting', progress: 70, parsedData: parseResult }
+              : f
+          ))
+        } else {
+          throw new Error(parseResult.error || 'Parsing failed')
+        }
+      } catch (error) {
+        console.error(`Error processing ${fileObj.file.name}:`, error)
+        setFiles(prev => prev.map(f => 
+          f.id === fileObj.id 
+            ? { 
+                ...f, 
+                status: 'failed', 
+                progress: 0,
+                error: error instanceof Error ? error.message : 'Processing failed',
+                validationStatus: 'invalid'
+              }
+            : f
+        ))
+      }
+    }
+
+    // Update all extracted fields
+    if (allFields.length > 0) {
+      setAllExtractedFields(allFields)
+      setShowFieldSummary(true)
+    }
+
+    // Mark all as ready
+    setFiles(prev => prev.map(f => {
+      const processed = filesToProcess.find(pf => pf.id === f.id)
+      if (processed && f.status !== 'failed') {
+        return { ...f, status: 'pending', progress: 100 }
+      }
+      return f
+    }))
+  }
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -186,11 +270,58 @@ export function ExampleFileUpload({
   }
 
   const retryFile = async (fileId: string) => {
+    // Find the file object
+    const target = files.find(f => f.id === fileId)
+    if (!target) return
+
+    // Reset state
     setFiles(prev => prev.map(f => 
       f.id === fileId 
-        ? { ...f, status: 'pending', progress: 0, error: undefined }
+        ? { ...f, status: 'processing', progress: 10, error: undefined }
         : f
     ))
+
+    try {
+      const effectiveSchemaId = schemaId || (ensureSchemaId ? await ensureSchemaId() : undefined)
+      if (!effectiveSchemaId) {
+        throw new Error('No schema available to attach example files')
+      }
+      const formData = new FormData()
+      formData.append('files', target.file)
+      formData.append('fieldMappings', JSON.stringify({}))
+
+      const response = await fetch(`/api/schemas/${effectiveSchemaId}/examples/bulk-upload`, {
+        method: 'POST',
+        body: formData
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Retry upload failed')
+      }
+
+      const result = await response.json()
+      const single = (result?.results || []).find((r: any) => r.fileName === target.file.name)
+
+      setFiles(prev => prev.map(f => 
+        f.id === fileId 
+          ? { 
+              ...f, 
+              status: single?.status === 'success' ? 'completed' : 'failed',
+              progress: single?.status === 'success' ? 100 : 0,
+              error: single?.error
+            }
+          : f
+      ))
+
+      if (onUploadComplete) onUploadComplete()
+    } catch (err) {
+      setFiles(prev => prev.map(f => 
+        f.id === fileId 
+          ? { ...f, status: 'failed', progress: 0, error: err instanceof Error ? err.message : 'Retry failed' }
+          : f
+      ))
+    }
   }
 
   const handleBulkUpload = async () => {
@@ -201,17 +332,30 @@ export function ExampleFileUpload({
     setUploadProgress(0)
 
     try {
-      // Prepare form data
+      const effectiveSchemaId = schemaId || (ensureSchemaId ? await ensureSchemaId() : undefined)
+      if (!effectiveSchemaId) {
+        throw new Error('No schema available to attach example files')
+      }
+      // Prepare form data with field mappings from selections
       const formData = new FormData()
       files.forEach(fileObj => {
         formData.append('files', fileObj.file)
       })
-      formData.append('fieldMappings', JSON.stringify({}))
+      
+      // Build field mappings from selections
+      const mappings: Record<string, string> = {}
+      Object.entries(fieldSelections).forEach(([extractedField, selection]) => {
+        if (selection.use && selection.mappedTo) {
+          mappings[extractedField] = selection.mappedTo
+        }
+      })
+      
+      formData.append('fieldMappings', JSON.stringify(mappings))
 
       // Update file statuses to processing
       setFiles(prev => prev.map(f => ({ ...f, status: 'processing', progress: 10 })))
 
-      const response = await fetch(`/api/schemas/${schemaId}/examples/bulk-upload`, {
+      const response = await fetch(`/api/schemas/${effectiveSchemaId}/examples/bulk-upload`, {
         method: 'POST',
         body: formData
       })
@@ -221,18 +365,27 @@ export function ExampleFileUpload({
         throw new Error(errorData.error || 'Bulk upload failed')
       }
 
-      const result = await response.json()
-      setUploadResults(result)
+      const resJson = await response.json()
+      setUploadResults(resJson)
+      if (onUploadSummary && resJson && typeof resJson.totalFiles === 'number') {
+        onUploadSummary({
+          batchId: resJson.batchId,
+          totalFiles: resJson.totalFiles,
+          completedFiles: resJson.completedFiles,
+          failedFiles: resJson.failedFiles,
+          results: resJson.results || []
+        })
+      }
 
       // Update file statuses based on results
       setFiles(prev => prev.map(fileObj => {
-        const result = result.results.find((r: any) => r.fileName === fileObj.file.name)
-        if (result) {
+        const fileResult = resJson.results.find((r: any) => r.fileName === fileObj.file.name)
+        if (fileResult) {
           return {
             ...fileObj,
-            status: result.status === 'success' ? 'completed' : 'failed',
-            progress: result.status === 'success' ? 100 : 0,
-            error: result.error
+            status: fileResult.status === 'success' ? 'completed' : 'failed',
+            progress: fileResult.status === 'success' ? 100 : 0,
+            error: fileResult.error
           }
         }
         return fileObj
@@ -303,6 +456,24 @@ export function ExampleFileUpload({
       </CardHeader>
       <CardContent className="space-y-6">
         {/* Upload Area */}
+        {/* Hidden file input - always available for "Add More Files" button */}
+        <input
+          ref={fileInputRef}
+          id="bulk-file-upload"
+          data-testid="file-input"
+          type="file"
+          className="hidden"
+          accept="*/*"
+          multiple
+          onChange={(e) => {
+            if (e.target.files && e.target.files.length > 0) {
+              handleFilesSelected(e.target.files)
+              // Reset input to allow selecting the same files again
+              e.target.value = ''
+            }
+          }}
+        />
+
         {files.length === 0 && (
           <div
             data-testid="drag-drop-area"
@@ -317,20 +488,6 @@ export function ExampleFileUpload({
             <div className="mt-4">
               <label htmlFor="bulk-file-upload" className="cursor-pointer">
                 <span className="text-primary hover:underline text-lg font-medium">Choose files</span>
-                <input
-                  ref={fileInputRef}
-                  id="bulk-file-upload"
-                  data-testid="file-input"
-                  type="file"
-                  className="hidden"
-                  accept="*/*"
-                  multiple
-                  onChange={(e) => {
-                    if (e.target.files) {
-                      handleFilesSelected(e.target.files)
-                    }
-                  }}
-                />
               </label>
               <span className="text-gray-600 ml-2"> or drag and drop</span>
             </div>
@@ -387,11 +544,15 @@ export function ExampleFileUpload({
                             </Badge>
                           </div>
                           
-                          {fileObj.status === 'processing' && (
+                          {(fileObj.status === 'processing' || fileObj.status === 'parsing' || fileObj.status === 'extracting' || fileObj.status === 'validating') && (
                             <div className="mt-2">
                               <Progress data-testid="upload-progress" value={fileObj.progress} className="h-2" />
                               <p className="text-xs text-gray-600 mt-1">
-                                Processing... {fileObj.progress}%
+                                {fileObj.status === 'validating' && 'Validating file...'}
+                                {fileObj.status === 'parsing' && 'Parsing content...'}
+                                {fileObj.status === 'extracting' && 'Extracting fields...'}
+                                {fileObj.status === 'processing' && 'Uploading...'}
+                                {' '}{fileObj.progress}%
                               </p>
                             </div>
                           )}
@@ -474,12 +635,37 @@ export function ExampleFileUpload({
               </Alert>
             )}
 
+            {/* Field Extraction Summary */}
+            {showFieldSummary && allExtractedFields.length > 0 && (
+              <div className="border-t pt-6 mt-6">
+                <FieldExtractionSummary
+                  key={`summary-${schemaFields.length}-${schemaFields.map(f => f.name).join('-')}`}
+                  extractedFields={allExtractedFields}
+                  existingSchemaFields={schemaFields}
+                  schemaId={schemaId}
+                  onFieldsSelected={(selections) => {
+                    setFieldSelections(selections)
+                  }}
+                  onFieldsToAdd={(newFields) => {
+                    if (onFieldsAdded) {
+                      onFieldsAdded(newFields.map(f => ({
+                        name: f.name,
+                        type: f.type,
+                        description: f.description
+                      })))
+                    }
+                  }}
+                  onSchemaRefresh={onSchemaRefresh}
+                />
+              </div>
+            )}
+
             {/* Actions */}
             <div className="flex gap-3">
               <Button
                 data-testid="upload-button"
                 onClick={handleBulkUpload}
-                disabled={isUploading || files.length === 0}
+                disabled={isUploading || files.length === 0 || files.some(f => f.status === 'validating' || f.status === 'parsing' || f.status === 'extracting')}
                 className="flex-1"
               >
                 {isUploading ? (

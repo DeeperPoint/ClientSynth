@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { spawn } from 'child_process'
+import { spawn, spawnSync } from 'child_process'
 import path from 'path'
 import { writeFile, unlink } from 'fs/promises'
 import { randomUUID } from 'crypto'
+import os from 'os'
 
 export async function POST(request: NextRequest) {
   try {
@@ -18,12 +19,13 @@ export async function POST(request: NextRequest) {
 
     // Save file temporarily
     const buffer = Buffer.from(await file.arrayBuffer())
-    const tempFilePath = path.join('/tmp', `${randomUUID()}.pdf`)
+    const tempDir = os.tmpdir()
+    const tempFilePath = path.join(tempDir, `${randomUUID()}.pdf`)
     await writeFile(tempFilePath, buffer)
 
     try {
       // Parse PDF using Python script
-      const text = await this.parsePDFFile(tempFilePath)
+      const text = await parsePDFFile(tempFilePath)
       
       return NextResponse.json({ 
         success: true, 
@@ -45,9 +47,27 @@ export async function POST(request: NextRequest) {
   }
 }
 
+function resolvePythonCommand(): string {
+  const candidates = [
+    'python',
+    'python3',
+    'py'
+  ]
+  for (const cmd of candidates) {
+    try {
+      const res = spawnSync(cmd, ['-V'])
+      if (res.status === 0 || (res.stderr && res.stderr.toString().length > 0)) {
+        return cmd
+      }
+    } catch {}
+  }
+  return 'python'
+}
+
 async function parsePDFFile(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const python = spawn('python', [
+    const py = resolvePythonCommand()
+    const python = spawn(py, [
       path.join(process.cwd(), 'lib', 'pdf_parser.py'),
       filePath
     ])
@@ -67,7 +87,7 @@ async function parsePDFFile(filePath: string): Promise<string> {
       if (code === 0) {
         resolve(output)
       } else {
-        reject(new Error(`PDF parsing failed: ${errorOutput}`))
+        reject(new Error(`PDF parsing failed: ${errorOutput || 'unknown error'}`))
       }
     })
 
@@ -76,5 +96,6 @@ async function parsePDFFile(filePath: string): Promise<string> {
     })
   })
 }
+
 
 

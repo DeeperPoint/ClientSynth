@@ -168,9 +168,28 @@ export async function POST(req: NextRequest) {
 			const keys = Object.keys(body.data)
 			const values = Object.values(body.data)
 			const setClause = keys.map((k, i) => `${k} = $${i + 1}`).join(", ")
-			const sql = `UPDATE ${table} SET ${setClause} WHERE ${(body.where as any).column} = $${keys.length + 1} RETURNING *`
-			const result = await query(sql, [...values, (body.where as any).value])
-			return NextResponse.json({ data: result.rows[0] ?? null })
+			
+			// Add tenant filtering for tenant-scoped tables
+			const tenantTables = ['schemas', 'jobs', 'exports', 'generated_data', 'media', 'example_files']
+			let sql = `UPDATE ${table} SET ${setClause} WHERE ${(body.where as any).column} = $${keys.length + 1}`
+			const params = [...values, (body.where as any).value]
+			
+			if (tenantTables.includes(table) && tenantIds.length > 0) {
+				const tenantPlaceholders = tenantIds.map((_, i) => `$${keys.length + 2 + i}`).join(',')
+				sql += ` AND ${table}.tenant_id IN (${tenantPlaceholders})`
+				params.push(...tenantIds)
+			}
+			
+			sql += " RETURNING *"
+			console.log('[API /db UPDATE] Executing SQL:', sql)
+			console.log('[API /db UPDATE] Parameters:', params)
+			const result = await query(sql, params)
+			
+			if (result.rows.length === 0) {
+				return NextResponse.json({ error: "Record not found or access denied" }, { status: 404 })
+			}
+			
+			return NextResponse.json({ data: result.rows[0] })
 		}
 
 		if (body.action === "delete") {

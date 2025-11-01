@@ -56,13 +56,14 @@ export default function SchemaEditPage() {
         body: JSON.stringify({
           action: 'select',
           table: 'schemas',
-          columns: 'id,name,description,schema_definition,created_at,created_by',
-          where: { op: 'eq', column: 'id', value: schemaId },
+          columns: 'schemas.id,schemas.name,schemas.description,schemas.schema_definition,schemas.created_at,schemas.created_by,profiles.full_name',
+          where: { op: 'eq', column: 'schemas.id', value: schemaId },
           join: {
             table: 'profiles',
             on: 'schemas.created_by = profiles.id',
-            columns: 'full_name'
-          }
+            type: 'LEFT'
+          },
+          single: true
         }),
       })
 
@@ -72,8 +73,21 @@ export default function SchemaEditPage() {
       }
 
       const data = await response.json()
-      if (data.data && data.data.length > 0) {
-        setSchema(data.data[0])
+      if (data.data) {
+        // Transform data to match expected structure (similar to list page)
+        const schemaData = data.data
+        const transformed = {
+          id: schemaData.id,
+          name: schemaData.name,
+          description: schemaData.description,
+          schema_definition: schemaData.schema_definition,
+          created_at: schemaData.created_at,
+          created_by: schemaData.created_by,
+          profiles: {
+            full_name: schemaData.full_name || 'Unknown'
+          }
+        }
+        setSchema(transformed)
       } else {
         setError("Schema not found")
       }
@@ -230,27 +244,7 @@ export default function SchemaEditPage() {
         </CardContent>
       </Card>
 
-      {/* Upload Example Files */}
-      <ExampleFileUpload
-        schemaId={schemaId}
-        schemaFields={schema.schema_definition.fields}
-        onUploadComplete={() => {
-          toast.success("Files uploaded successfully!")
-          // Refresh the page to show updated files
-          window.location.reload()
-        }}
-        onFieldsAdded={(newFields) => {
-          toast.success(`${newFields.length} new fields added to schema`)
-          // Refresh schema data
-          loadSchema()
-        }}
-      />
-
-      {/* Example Files Manager */}
-      <ExampleFilesManager
-        schemaId={schemaId}
-        schemaFieldNames={schema.schema_definition.fields.map(f => f.name)}
-      />
+      {/* After save: keep this page focused on schema overview and generation */}
     </div>
   )
 }

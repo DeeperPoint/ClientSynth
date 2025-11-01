@@ -23,9 +23,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate format
-    const validFormats = ["csv", "json", "xlsx", "sql"]
+    const validFormats = ["csv", "json", "xlsx", "sql", "xml", "parquet"]
     if (!validFormats.includes(format)) {
-      return NextResponse.json({ error: "Invalid format. Must be one of: csv, json, xlsx, sql" }, { status: 400 })
+      return NextResponse.json({ error: "Invalid format. Must be one of: csv, json, xlsx, sql, xml, parquet" }, { status: 400 })
     }
 
     // Get job to validate access and get tenant_id
@@ -64,12 +64,20 @@ export async function POST(request: NextRequest) {
       const contentType = generator.getContentType(format)
       const dataUrl = `data:${contentType};base64,${Buffer.from(content).toString("base64")}`
 
+      // Calculate file size and record count based on format
+      const fileSize = Buffer.isBuffer(content) 
+        ? content.length 
+        : Buffer.byteLength(content, typeof content === 'string' ? 'utf8' : 'binary')
+      const recordCount = format === 'json' 
+        ? (JSON.parse(content as string).data?.length || 0)
+        : (typeof content === 'string' ? content.split('\n').length - 1 : 0)
+
       // Update export record with completion
       await query(`
         UPDATE exports 
         SET status = 'completed', file_url = $1, file_size = $2, record_count = $3, updated_at = NOW()
         WHERE id = $4
-      `, [dataUrl, Buffer.byteLength(content, "utf8"), content.split("\n").length - 1, exportRecord.id])
+      `, [dataUrl, fileSize, recordCount, exportRecord.id])
 
       return NextResponse.json({
         success: true,

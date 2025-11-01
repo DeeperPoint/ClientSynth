@@ -34,12 +34,13 @@ export async function POST(
     const currentDefinition = schemaResult.rows[0].schema_definition
     const currentFields = currentDefinition.fields || []
 
-    // Add new fields
+    // Add new fields with IDs
     const newFields = fields.map(field => ({
+      id: `field-${Date.now()}-${Math.random().toString(36).substring(7)}`, // Generate unique ID
       name: field.name,
       type: field.type,
       description: field.description || `Auto-generated field from example file`,
-      required: false
+      required: field.required || false
     }))
 
     // Check for duplicates
@@ -86,5 +87,7 @@ export async function POST(
     )
   }
 }
+
+
 
 

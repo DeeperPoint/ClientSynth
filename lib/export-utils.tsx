@@ -72,8 +72,13 @@ export class ExportGenerator {
         // Handle null/undefined values
         if (value === null || value === undefined) return ""
 
-        // Convert to string and escape
-        const stringValue = String(value)
+        // Handle arrays (e.g., multiple images) - join with semicolon
+        let stringValue: string
+        if (Array.isArray(value)) {
+          stringValue = value.join('; ')
+        } else {
+          stringValue = String(value)
+        }
 
         // Escape quotes and wrap in quotes if contains comma, quote, or newline
         if (
@@ -112,95 +117,40 @@ export class ExportGenerator {
       throw new Error("No data to export")
     }
 
-    // Create a simple XLSX structure manually
-    // In production, you'd use a library like 'xlsx' or 'exceljs'
+    // Use xlsx library for proper Excel generation
+    const XLSX = await import('xlsx')
+    
     const headers = Object.keys(records[0])
-
-    // Create XML structure for Excel
-    const worksheetXML = this.createWorksheetXML(records, headers)
-    const workbookXML = this.createWorkbookXML()
-    const sharedStringsXML = this.createSharedStringsXML(records, headers)
-
-    // Create ZIP structure (XLSX is a ZIP file)
-    const xlsxContent = this.createXLSXZip(worksheetXML, workbookXML, sharedStringsXML)
-
-    return Buffer.from(xlsxContent, "binary")
-  }
-
-  private createWorksheetXML(records: any[], headers: string[]): string {
-    let xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <sheetData>`
-
-    // Header row
-    xml += `<row r="1">`
-    headers.forEach((header, index) => {
-      const cellRef = this.getCellReference(1, index + 1)
-      xml += `<c r="${cellRef}" t="inlineStr"><is><t>${this.escapeXML(header)}</t></is></c>`
-    })
-    xml += `</row>`
-
-    // Data rows
-    records.forEach((record, rowIndex) => {
-      const rowNum = rowIndex + 2
-      xml += `<row r="${rowNum}">`
-
-      headers.forEach((header, colIndex) => {
-        const cellRef = this.getCellReference(rowNum, colIndex + 1)
+    
+    // Prepare data array with headers first
+    const worksheetData: any[][] = [headers]
+    
+    // Add data rows
+    records.forEach((record) => {
+      const row = headers.map((header) => {
         const value = record[header]
-
-        if (value !== null && value !== undefined) {
-          const isNumber = !isNaN(Number(value)) && !isNaN(Number.parseFloat(String(value)))
-
-          if (isNumber) {
-            xml += `<c r="${cellRef}"><v>${value}</v></c>`
-          } else {
-            xml += `<c r="${cellRef}" t="inlineStr"><is><t>${this.escapeXML(String(value))}</t></is></c>`
-          }
-        } else {
-          xml += `<c r="${cellRef}"></c>`
+        // Handle arrays (e.g., multiple images) - join with newline for Excel
+        if (Array.isArray(value)) {
+          return value.join('\n')
         }
+        return value !== null && value !== undefined ? value : ''
       })
-
-      xml += `</row>`
+      worksheetData.push(row)
     })
 
-    xml += `</sheetData></worksheet>`
-    return xml
+    // Create worksheet from array
+    const worksheet = XLSX.utils.aoa_to_sheet(worksheetData)
+
+    // Create workbook and add worksheet
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Data')
+
+    // Generate buffer
+    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' })
+    
+    return buffer
   }
 
-  private createWorkbookXML(): string {
-    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <sheets>
-    <sheet name="Data" sheetId="1" r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>
-  </sheets>
-</workbook>`
-  }
-
-  private createSharedStringsXML(records: any[], headers: string[]): string {
-    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-</sst>`
-  }
-
-  private createXLSXZip(worksheetXML: string, workbookXML: string, sharedStringsXML: string): string {
-    // This is a simplified XLSX creation - in production use a proper ZIP library
-    // For now, return CSV format as fallback
-    console.warn("XLSX generation simplified - using CSV format")
-    const records = JSON.parse(worksheetXML.match(/<t>(.*?)<\/t>/g)?.[0]?.replace(/<\/?t>/g, "") || "[]")
-    return this.generateCSV(records)
-  }
-
-  private getCellReference(row: number, col: number): string {
-    let colName = ""
-    while (col > 0) {
-      col--
-      colName = String.fromCharCode(65 + (col % 26)) + colName
-      col = Math.floor(col / 26)
-    }
-    return colName + row
-  }
 
   private escapeXML(text: string): string {
     return text
@@ -302,9 +252,19 @@ ${headers
 
       Object.entries(record).forEach(([key, value]) => {
         const sanitizedKey = key.replace(/[^a-zA-Z0-9_]/g, "_")
-        const sanitizedValue = value !== null && value !== undefined ? this.escapeXML(String(value)) : ""
-
-        xml += `      <${sanitizedKey}>${sanitizedValue}</${sanitizedKey}>\n`
+        
+        // Handle arrays properly
+        if (Array.isArray(value)) {
+          xml += `      <${sanitizedKey}>\n`
+          value.forEach((item, itemIndex) => {
+            const itemValue = item !== null && item !== undefined ? this.escapeXML(String(item)) : ""
+            xml += `        <item index="${itemIndex + 1}">${itemValue}</item>\n`
+          })
+          xml += `      </${sanitizedKey}>\n`
+        } else {
+          const sanitizedValue = value !== null && value !== undefined ? this.escapeXML(String(value)) : ""
+          xml += `      <${sanitizedKey}>${sanitizedValue}</${sanitizedKey}>\n`
+        }
       })
 
       xml += "    </record>\n"
@@ -317,22 +277,44 @@ ${headers
   }
 
   private async generateParquet(records: any[]): Promise<Buffer> {
-    // Parquet is a complex binary format - this is a placeholder
-    // In production, you'd use a library like 'parquetjs'
-    console.warn("Parquet generation not fully implemented - using JSON format")
+    // Parquet is a complex binary format requiring specialized libraries
+    // For now, we'll generate a CSV-compatible format that can be converted to Parquet
+    // In production, use 'parquetjs' or 'apache-arrow' libraries
+    
+    if (records.length === 0) {
+      throw new Error("No data to export")
+    }
 
-    // Create a JSON representation with Parquet-like metadata
-    const parquetLike = {
-      schema: this.inferSchema(records),
-      data: records,
+    // Generate a structured JSON format with schema information
+    // This can be imported into tools like pandas or converted to Parquet
+    const schema = this.inferSchema(records)
+    
+    // Create a format that's compatible with Parquet conversion tools
+    const parquetCompatible = {
+      schema: schema,
+      data: records.map((record) => {
+        const converted: any = {}
+        Object.entries(record).forEach(([key, value]) => {
+          // Convert arrays to strings for Parquet compatibility
+          if (Array.isArray(value)) {
+            converted[key] = JSON.stringify(value)
+          } else {
+            converted[key] = value
+          }
+        })
+        return converted
+      }),
       metadata: {
-        format: "parquet-like",
+        format: "parquet-compatible-json",
         recordCount: records.length,
         exportedAt: new Date().toISOString(),
+        note: "Convert this JSON to Parquet using pandas.read_json() and df.to_parquet(), or use a Parquet conversion tool"
       },
     }
 
-    return Buffer.from(JSON.stringify(parquetLike, null, 2))
+    // Return as JSON - users can convert to Parquet using external tools
+    // Alternatively, we could throw an error directing users to use CSV/JSON
+    return Buffer.from(JSON.stringify(parquetCompatible, null, 2), 'utf8')
   }
 
   private inferSchema(records: any[]): any {

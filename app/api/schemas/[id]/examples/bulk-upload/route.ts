@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server"
 import { S3Uploader } from "@/lib/s3-uploader"
 import { LocalFileStorage } from "@/lib/local-file-storage"
 import { UniversalFileParser } from "@/lib/universal-file-parser"
+import { FileValidator } from "@/lib/file-validator"
 import { query } from "@/lib/postgres/client"
 import crypto from "crypto"
 
@@ -138,57 +139,17 @@ export async function POST(
       }
       
       try {
-        // Enhanced file validation
-        const validation = parser.validateFile(file)
+        // Enhanced file validation with magic number checking and virus scan
+        const fileBuffer = await file.arrayBuffer()
+        const buffer = Buffer.from(fileBuffer)
+        
+        const validation = await FileValidator.validateFile(buffer, fileName, file.type)
         if (!validation.valid) {
           throw new Error(validation.error || 'Invalid file')
         }
 
-        // Check file size (50MB limit)
-        if (file.size > 50 * 1024 * 1024) {
-          throw new Error('File size exceeds 50MB limit')
-        }
-
-        // Enhanced file type validation with MIME type checking
-        const allowedExtensions = ['pdf', 'docx', 'doc', 'txt', 'csv', 'json', 'xlsx', 'xls', 'xml', 'png', 'jpg', 'jpeg', 'gif']
-        const allowedMimeTypes = [
-          'application/pdf',
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          'application/msword',
-          'text/plain',
-          'text/csv',
-          'application/json',
-          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          'application/vnd.ms-excel',
-          'text/xml',
-          'image/png',
-          'image/jpeg',
-          'image/gif'
-        ]
-        
-        if (!allowedExtensions.includes(fileExtension)) {
-          throw new Error(`File type .${fileExtension} not supported`)
-        }
-        
-        if (!allowedMimeTypes.includes(file.type)) {
-          throw new Error(`MIME type ${file.type} not supported`)
-        }
-
-        // Basic virus scan - check for suspicious file patterns
-        const suspiciousPatterns = [
-          /\.exe$/i,
-          /\.bat$/i,
-          /\.cmd$/i,
-          /\.scr$/i,
-          /\.pif$/i,
-          /\.com$/i,
-          /\.vbs$/i,
-          /\.js$/i,
-          /\.jar$/i
-        ]
-        
-        if (suspiciousPatterns.some(pattern => pattern.test(fileName))) {
-          throw new Error('File type appears to be executable and is not allowed')
+        if (!validation.isSafe) {
+          throw new Error(validation.error || 'File failed security validation')
         }
 
         // Parse file
@@ -198,19 +159,17 @@ export async function POST(
         }
 
         // Generate file metadata
-        const fileBuffer = await file.arrayBuffer()
-        const md5Hash = crypto.createHash("md5").update(Buffer.from(fileBuffer)).digest("hex")
-        const fileType = fileExtension === 'csv' ? 'csv' : 
-                        fileExtension === 'json' ? 'json' : 
-                        ['xlsx', 'xls'].includes(fileExtension) ? fileExtension :
-                        ['png', 'jpg', 'jpeg', 'gif'].includes(fileExtension) ? 'image' :
-                        fileExtension
+        const md5Hash = crypto.createHash("md5").update(buffer).digest("hex")
+        const allowedTypes = new Set(['csv','json','xlsx','xls'])
+        const originalExtension = fileExtension
+        const mappedType = allowedTypes.has(fileExtension) ? fileExtension : 'json'
+        const fileType = mappedType
 
         // Upload file
         let uploadResult
         try {
           const s3Uploader = new S3Uploader()
-          uploadResult = await s3Uploader.uploadFile(Buffer.from(fileBuffer), {
+          uploadResult = await s3Uploader.uploadFile(buffer, {
             tenantId,
             schemaId,
             fileName: file.name,
@@ -243,12 +202,30 @@ export async function POST(
           fileType,
           file.size,
           uploadResult.key,
-          uploadResult.bucket,
+          (uploadResult as any).bucket ?? 'local',
           md5Hash,
           user.id
         ])
 
         const exampleFileId = fileResult.rows[0].id
+
+        // Try to persist parsing metadata for downstream steps (if column exists)
+        try {
+          await query(
+            `UPDATE example_files SET parsing_metadata = $1 WHERE id = $2`,
+            [
+              JSON.stringify({
+                extracted_fields: parseResult.fields.length,
+                record_count: parseResult.metadata.recordCount,
+                confidence: parseResult.metadata.confidence,
+                original_extension: originalExtension
+              }),
+              exampleFileId,
+            ]
+          )
+        } catch (e) {
+          console.warn('example_files.parsing_metadata not available; skipping metadata save')
+        }
 
         // Update bulk upload file record with success (skip if table doesn't exist)
         try {
