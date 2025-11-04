@@ -28,6 +28,41 @@ export interface PDFContentOptions {
   marginMm?: number
 }
 
+export interface PDFTemplateConfig {
+  title?: string
+  pageSize?: 'A4' | 'LETTER'
+  marginMm?: number
+  fonts?: {
+    default?: string
+    defaultSize?: number
+    title?: { family: string; size: number }
+    header?: { family: string; size: number }
+  }
+  sections?: Array<{
+    type: 'title' | 'text' | 'table' | 'pageBreak' | 'spacer'
+    content?: string
+    headers?: string[]
+    rows?: string | any[]
+    style?: {
+      headerBackground?: string
+      alternateRows?: boolean
+      columnWidths?: number[]
+    }
+    pageBreakBefore?: boolean
+    pageBreakAfter?: boolean
+    font?: { family: string; size: number }
+    spaceAfter?: number
+    heightMm?: number
+  }>
+}
+
+export interface PDFTemplateGenerateOptions {
+  templateConfig: PDFTemplateConfig
+  data: Record<string, any>
+  pageSize?: 'A4' | 'LETTER'
+  marginMm?: number
+}
+
 export class PDFGenerator {
   private s3Uploader = new S3Uploader()
 
@@ -206,6 +241,68 @@ export class PDFGenerator {
     })
   }
 
+    async generateFromTemplate(options: PDFTemplateGenerateOptions): Promise<{ success: boolean; pdfBase64?: string; error?: string }> {
+    return new Promise((resolve) => {
+      const templateFile = join(process.cwd(), `temp_template_${Date.now()}.json`)
+      const dataFile = join(process.cwd(), `temp_data_${Date.now()}.json`)
+      
+      try {
+        writeFileSync(templateFile, JSON.stringify(options.templateConfig))
+        writeFileSync(dataFile, JSON.stringify(options.data))
+
+        const python = spawn('python', [
+          'lib/pdf_service.py',
+          'generate',
+          templateFile,
+          dataFile,
+          options.pageSize || options.templateConfig.pageSize || 'A4',
+          String(options.marginMm || options.templateConfig.marginMm || 20)
+        ], {
+          cwd: process.cwd()
+        })
+
+        let output = ''
+        let error = ''
+
+        python.stdout.on('data', (data) => {
+          output += data.toString()
+        })
+
+        python.stderr.on('data', (data) => {
+          error += data.toString()
+        })
+
+        python.on('close', (code) => {
+          // Clean up temp files
+          try {
+            unlinkSync(templateFile)
+            unlinkSync(dataFile)
+          } catch (e) {
+            // Ignore cleanup errors
+          }
+
+          if (code !== 0) {
+            resolve({ success: false, error: error || 'Python process failed' })
+            return
+          }
+
+          try {
+            const result = JSON.parse(output)
+            resolve({
+              success: result.success,
+              pdfBase64: result.pdf_base64,
+              error: result.error
+            })
+          } catch (e) {
+            resolve({ success: false, error: 'Failed to parse Python output' })
+          }
+        })
+      } catch (e) {
+        resolve({ success: false, error: 'Failed to create temp files' })
+      }
+    })
+  }
+
   async generateAndUploadPDF(
     tenantId: string,
     jobId: string,
@@ -214,7 +311,7 @@ export class PDFGenerator {
     options: PDFTemplateOptions | PDFFillOptions,
     recordData: Record<string, any>
   ): Promise<{ url: string; s3Key: string }> {
-    let result: { success: boolean; pdfBase64?: string; error?: string }
+    let result: { success: boolean; pdfBase64?: string; error?: string }        
 
     if ('pdfBase64' in options) {
       result = await this.fillPDF(options)
