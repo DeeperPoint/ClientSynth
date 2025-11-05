@@ -31,78 +31,61 @@ export default function DashboardPage() {
   const supabase = createClient()
 
   useEffect(() => {
+    console.log('[Dashboard] useEffect triggered - calling loadDashboardData')
     loadDashboardData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    console.log('[Dashboard] Stats state changed:', stats)
+  }, [stats])
+
+  useEffect(() => {
+    console.log('[Dashboard] Recent activity state changed:', recentActivity)
+  }, [recentActivity])
 
   const loadDashboardData = async () => {
     try {
-      // Get current user and tenant
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-      if (!user) return
+      console.log('[Dashboard] loadDashboardData called')
 
-      // Load stats
-      const [schemasResult, jobsResult, exportsResult] = await Promise.all([
-        supabase.from("schemas").select("id", { count: "exact" }),
-        supabase.from("jobs").select("id, status", { count: "exact" }),
-        supabase.from("exports").select("id", { count: "exact" }),
-      ])
+      // Use dedicated dashboard stats endpoint
+      console.log('[Dashboard] Fetching stats from /api/dashboard/stats')
+      const response = await fetch('/api/dashboard/stats')
+      
+      console.log('[Dashboard] Response status:', response.status)
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        console.error('[Dashboard] Error response:', errorData)
+        throw new Error(errorData.error || 'Failed to load dashboard stats')
+      }
 
-      const completedJobs = jobsResult.data?.filter((job) => job.status === "completed").length || 0
-
-      setStats({
-        schemas: schemasResult.count || 0,
-        jobs: jobsResult.count || 0,
-        completedJobs,
-        exports: exportsResult.count || 0,
+      const data = await response.json()
+      
+      console.log('[Dashboard] Full response:', data)
+      console.log('[Dashboard] Stats received:', data.stats)
+      console.log('[Dashboard] Stats type check:', {
+        schemas: typeof data.stats?.schemas,
+        jobs: typeof data.stats?.jobs,
+        completedJobs: typeof data.stats?.completedJobs,
+        exports: typeof data.stats?.exports
       })
+      console.log('[Dashboard] Recent activity received:', data.recentActivity)
+      console.log('[Dashboard] Recent activity count:', data.recentActivity?.length || 0)
 
-      // Load recent activity
-      const { data: recentSchemas } = await supabase
-        .from("schemas")
-        .select("id, name, created_at")
-        .order("created_at", { ascending: false })
-        .limit(3)
-
-      const { data: recentJobs } = await supabase
-        .from("jobs")
-        .select("id, schema_id, status, created_at")
-        .order("created_at", { ascending: false })
-        .limit(3)
-
-      const { data: recentExports } = await supabase
-        .from("exports")
-        .select("id, job_id, format, created_at")
-        .order("created_at", { ascending: false })
-        .limit(2)
-
-      const activities: RecentActivity[] = [
-        ...(recentSchemas?.map((schema) => ({
-          id: schema.id,
-          type: "schema" as const,
-          title: `Schema "${schema.name}" created`,
-          created_at: schema.created_at,
-        })) || []),
-        ...(recentJobs?.map((job) => ({
-          id: job.id,
-          type: "job" as const,
-          title: `Generation job ${job.id.substring(0, 8)}…`,
-          status: job.status,
-          created_at: job.created_at,
-        })) || []),
-        ...(recentExports?.map((exp) => ({
-          id: exp.id,
-          type: "export" as const,
-          title: `Data exported as ${exp.format.toUpperCase()}`,
-          created_at: exp.created_at,
-        })) || []),
-      ]
-
-      activities.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-      setRecentActivity(activities.slice(0, 5))
+      const newStats = data.stats || { schemas: 0, jobs: 0, completedJobs: 0, exports: 0 }
+      const newActivity = data.recentActivity || []
+      
+      console.log('[Dashboard] Setting stats to:', newStats)
+      console.log('[Dashboard] Setting recent activity to:', newActivity)
+      
+      setStats(newStats)
+      setRecentActivity(newActivity)
+      
+      console.log('[Dashboard] State updated successfully')
     } catch (error) {
-      console.error("Error loading dashboard data:", error)
+      console.error("[Dashboard] Error loading dashboard data:", error)
+      console.error("[Dashboard] Error details:", error instanceof Error ? error.message : String(error))
     } finally {
       setIsLoading(false)
     }
@@ -134,7 +117,10 @@ export default function DashboardPage() {
     }
   }
 
+  console.log('[Dashboard Render] isLoading:', isLoading, 'stats:', stats, 'recentActivity count:', recentActivity.length)
+
   if (isLoading) {
+    console.log('[Dashboard Render] Showing loading state')
     return (
       <div className="max-w-7xl mx-auto">
         <div className="animate-pulse">
@@ -149,6 +135,8 @@ export default function DashboardPage() {
       </div>
     )
   }
+  
+  console.log('[Dashboard Render] Rendering dashboard with stats:', stats)
 
   return (
     <div className="max-w-7xl mx-auto">

@@ -49,11 +49,13 @@ interface Job {
   updated_at: string
   error_message?: string
   config: any
-  schemas: {
+  created_by?: string
+  full_name?: string
+  schemas?: {
     id: string
     name: string
   }
-  profiles: {
+  profiles?: {
     full_name: string
   }
 }
@@ -88,15 +90,28 @@ export default function JobsPage() {
 
   const loadJobs = async () => {
     try {
-      const { data, error } = await supabase
-        .from("jobs")
-        .select(
-          "id, name, status, progress, total_records, generated_records, created_at, updated_at, error_message, config"
-        )
-        .order("created_at", { ascending: false })
+      const response = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'jobs',
+          columns: 'jobs.id, jobs.name, jobs.status, jobs.progress, jobs.total_records, jobs.generated_records, jobs.created_at, jobs.updated_at, jobs.error_message, jobs.config, jobs.created_by, profiles.full_name',
+          join: {
+            table: 'profiles',
+            on: 'jobs.created_by = profiles.id',
+            type: 'LEFT'
+          },
+          orderBy: { column: 'jobs.created_at', ascending: false }
+        })
+      })
 
-      if (error) throw error
-      setJobs(data || [])
+      if (!response.ok) {
+        throw new Error('Failed to load jobs')
+      }
+
+      const result = await response.json()
+      setJobs(result.data || [])
     } catch (error) {
       console.error("Error loading jobs:", error)
     } finally {
@@ -651,7 +666,7 @@ export default function JobsPage() {
                         </div>
                         <div>
                           <div className="text-sm text-muted-foreground">Created By</div>
-                          <div className="font-medium text-foreground">{job.profiles?.full_name || "Unknown"}</div>
+                          <div className="font-medium text-foreground">{job.full_name || job.profiles?.full_name || "Unknown"}</div>
                         </div>
                         <div>
                           <div className="text-sm text-muted-foreground">Created</div>

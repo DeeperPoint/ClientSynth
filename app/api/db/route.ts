@@ -8,9 +8,15 @@ type Body = {
 	where?: { op: "eq"; column: string; value: any } | { op: "in"; column: string; values: any[] }
 	orderBy?: { column: string; ascending: boolean }
 	limitCount?: number
+	limit?: number
 	data?: any
 	returning?: string
 	single?: boolean
+	join?: {
+		table: string
+		on: string
+		type?: "LEFT" | "INNER" | "RIGHT"
+	}
 }
 
 function isSafeIdentifier(id: string) {
@@ -19,7 +25,29 @@ function isSafeIdentifier(id: string) {
 
 export async function POST(req: NextRequest) {
 	try {
+		// Authenticate user and get tenant IDs
+		const { createClient } = await import('@/lib/supabase/server')
+		const supabase = await createClient()
+		const { data: { user } } = await supabase.auth.getUser()
+
+		console.log('[API DB] User:', user?.id, user?.email)
+
+		if (!user) {
+			console.log('[API DB] No user - returning 401')
+			return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+		}
+
+		// Get user's tenant IDs for filtering
+		const tenantsResult = await query(`
+			SELECT tenant_id FROM user_tenant_roles WHERE user_id = $1
+		`, [user.id])
+		const tenantIds = tenantsResult.rows.map(row => row.tenant_id)
+		
+		console.log('[API DB] User tenants:', tenantIds)
+
 		const raw = await req.json()
+		console.log('[API DB] Request body:', JSON.stringify(raw, null, 2))
+		
 		// Back-compat shim: accept legacy { op, filters, order, limit, values } from Supabase shim
 		const body: Body = {
 			action: (raw.action || raw.op) as any,
@@ -37,6 +65,7 @@ export async function POST(req: NextRequest) {
 			data: raw.data || raw.values,
 			returning: raw.returning,
 			single: raw.single === true,
+			join: raw.join,
 		}
 
 		if (!body || !body.table || !isSafeIdentifier(body.table)) {
@@ -45,24 +74,58 @@ export async function POST(req: NextRequest) {
 
 		const table = body.table
 
-		if (body.action === "select") {
-			const cols = body.columns && body.columns.trim().length > 0 ? body.columns : "*"
-			const where = body.where
-			const order = body.orderBy
-			const limitCount = body.limitCount
-			let sql = `SELECT ${cols} FROM ${table}`
-			const params: any[] = []
+	if (body.action === "select") {
+		let cols = body.columns && body.columns.trim().length > 0 ? body.columns : "*"
+		const where = body.where
+		const order = body.orderBy
+		const limitCount = body.limitCount || body.limit
+		const join = body.join
+		
+		// If there's a JOIN and columns aren't qualified, qualify them with table name
+		if (join && cols !== "*" && !cols.includes('.')) {
+			const columnNames = cols.split(',').map(c => c.trim())
+			cols = columnNames.map(col => `${table}.${col}`).join(', ')
+		}
+		
+		let sql = `SELECT ${cols} FROM ${table}`
+		const params: any[] = []
 
-			if (where) {
-				if (where.op === "eq") {
-					sql += ` WHERE ${where.column} = $1`
-					params.push(where.value)
-				} else if (where.op === "in" && Array.isArray(where.values) && where.values.length > 0) {
-					const placeholders = where.values.map((_, i) => `$${i + 1}`).join(",")
-					sql += ` WHERE ${where.column} IN (${placeholders})`
-					params.push(...where.values)
-				}
+		// Handle JOIN
+		if (join && join.table && join.on) {
+			if (!isSafeIdentifier(join.table)) {
+				return NextResponse.json({ error: "Invalid join table" }, { status: 400 })
 			}
+			const joinType = join.type || "LEFT"
+			sql += ` ${joinType} JOIN ${join.table} ON ${join.on}`
+		}
+
+			// Add tenant filtering for tenant-scoped tables
+			const tenantTables = ['schemas', 'jobs', 'exports', 'generated_data', 'media', 'example_files']
+			let hasWhere = false
+
+			if (tenantTables.includes(table) && tenantIds.length > 0) {
+				const tenantPlaceholders = tenantIds.map((_, i) => `$${i + 1}`).join(',')
+				sql += ` WHERE ${table}.tenant_id IN (${tenantPlaceholders})`
+				params.push(...tenantIds)
+				hasWhere = true
+			}
+
+		if (where) {
+			const whereKeyword = hasWhere ? ' AND' : ' WHERE'
+			const paramOffset = params.length
+			
+			// Qualify column name with table name if not already qualified
+			const whereColumn = where.column.includes('.') ? where.column : `${table}.${where.column}`
+			
+			if (where.op === "eq") {
+				sql += `${whereKeyword} ${whereColumn} = $${paramOffset + 1}`
+				params.push(where.value)
+			} else if (where.op === "in" && Array.isArray(where.values) && where.values.length > 0) {
+				const placeholders = where.values.map((_, i) => `$${paramOffset + i + 1}`).join(",")
+				sql += `${whereKeyword} ${whereColumn} IN (${placeholders})`
+				params.push(...where.values)
+			}
+		}
 
 			if (order) {
 				sql += ` ORDER BY ${order.column} ${order.ascending ? "ASC" : "DESC"}`
@@ -71,8 +134,17 @@ export async function POST(req: NextRequest) {
 				sql += ` LIMIT ${limitCount}`
 			}
 
+			console.log('[API /db] Executing SQL:', sql)
+			console.log('[API /db] Parameters:', params)
+
 			const result = await query(sql, params)
 			const rows = result.rows
+			
+			console.log('[API /db] Returned rows:', rows.length)
+			if (rows.length > 0) {
+				console.log('[API /db] Sample row:', rows[0])
+			}
+
 			return NextResponse.json({ data: body.single ? rows[0] ?? null : rows })
 		}
 

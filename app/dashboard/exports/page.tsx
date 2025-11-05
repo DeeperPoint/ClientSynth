@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -23,13 +22,7 @@ interface Export {
   record_count?: number
   created_at: string
   error_message?: string
-  jobs: {
-    id: string
-    name: string
-  }
-  schemas: {
-    name: string
-  }
+  job_id?: string
 }
 
 export default function ExportsPage() {
@@ -40,7 +33,6 @@ export default function ExportsPage() {
     exportId: "",
     exportName: "",
   })
-  const supabase = createClient()
 
   useEffect(() => {
     loadExports()
@@ -48,27 +40,32 @@ export default function ExportsPage() {
 
   const loadExports = async () => {
     try {
-      const { data, error } = await supabase
-        .from("exports")
-        .select(`
-          id,
-          name,
-          format,
-          status,
-          file_url,
-          file_size,
-          record_count,
-          created_at,
-          error_message,
-          jobs(id, name),
-          jobs!inner(schemas(name))
-        `)
-        .order("created_at", { ascending: false })
+      console.log('[Exports] Loading exports...')
+      
+      const response = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'select',
+          table: 'exports',
+          columns: 'exports.id, exports.name, exports.format, exports.status, exports.file_url, exports.file_size, exports.record_count, exports.created_at, exports.error_message, exports.job_id',
+          orderBy: { column: 'exports.created_at', ascending: false }
+        })
+      })
 
-      if (error) throw error
-      setExports(data || [])
+      if (!response.ok) {
+        throw new Error('Failed to load exports')
+      }
+
+      const result = await response.json()
+      console.log('[Exports] Received', (result.data || []).length, 'exports')
+      
+      // Transform to match expected structure (we'll fetch job/schema names separately if needed)
+      const exportsData = result.data || []
+      setExports(exportsData)
     } catch (error) {
       console.error("Error loading exports:", error)
+      toast.error("Failed to load exports")
     } finally {
       setIsLoading(false)
     }
@@ -91,8 +88,19 @@ export default function ExportsPage() {
 
   const confirmDelete = async () => {
     try {
-      const { error } = await supabase.from("exports").delete().eq("id", deleteDialog.exportId)
-      if (error) throw error
+      const response = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'delete',
+          table: 'exports',
+          where: { op: 'eq', column: 'id', value: deleteDialog.exportId }
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to delete export')
+      }
 
       setExports(exports.filter((e) => e.id !== deleteDialog.exportId))
       toast.success(`Export "${deleteDialog.exportName}" deleted successfully`)
@@ -158,7 +166,9 @@ export default function ExportsPage() {
                 <div className="flex items-start justify-between">
                   <div>
                     <CardTitle className="text-lg">{exportRecord.name}</CardTitle>
-                    <CardDescription className="mt-1">From: {exportRecord.jobs?.name}</CardDescription>
+                    <CardDescription className="mt-1">
+                      {exportRecord.format.toUpperCase()} Export
+                    </CardDescription>
                   </div>
                   <Badge
                     variant={

@@ -48,6 +48,100 @@ def pdf_fill(pdf_base64: str, data: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+def pdf_content_create(title: str, content: str, page_size: str = "A4", margin_mm: int = 20) -> Dict[str, Any]:
+    """Create a PDF with actual text content (not form fields)"""
+    try:
+        if not title.strip():
+            return {"success": False, "error": "title required"}
+        if not content:
+            return {"success": False, "error": "content required"}
+        if page_size not in {"A4", "LETTER"}:
+            return {"success": False, "error": "bad page_size"}
+
+        ps = A4 if page_size == "A4" else LETTER
+        buf = io.BytesIO()
+        c = canvas.Canvas(buf, pagesize=ps)
+        pw, ph = ps
+        m = float(margin_mm) * mm
+
+        c.setTitle(title.strip())
+        
+        # Draw title
+        c.setFont("Helvetica-Bold", 16)
+        c.drawString(m, ph - m, title.strip())
+        
+        # Draw content
+        y = ph - m - 15 * mm
+        c.setFont("Helvetica", 10)
+        
+        # Split content into lines and handle wrapping
+        lines = content.split('\n')
+        line_height = 4 * mm
+        max_width = pw - 2 * m
+        
+        for line in lines:
+            # Handle empty lines
+            if not line.strip():
+                y -= line_height
+                if y < m:
+                    c.showPage()
+                    c.setFont("Helvetica", 10)
+                    y = ph - m
+                continue
+            
+            # Check if line starts with special markers for formatting
+            if line.strip().startswith('**') and line.strip().endswith('**'):
+                # Bold section header
+                c.setFont("Helvetica-Bold", 12)
+                text = line.strip().replace('**', '')
+                c.drawString(m, y, text)
+                c.setFont("Helvetica", 10)
+                y -= line_height * 1.5
+            elif line.strip().startswith('- '):
+                # Bullet point
+                c.drawString(m + 5*mm, y, '•')
+                c.drawString(m + 10*mm, y, line.strip()[2:])
+                y -= line_height
+            else:
+                # Regular text - wrap if needed
+                words = line.split()
+                current_line = ""
+                for word in words:
+                    test_line = current_line + " " + word if current_line else word
+                    if c.stringWidth(test_line, "Helvetica", 10) < max_width:
+                        current_line = test_line
+                    else:
+                        if current_line:
+                            c.drawString(m, y, current_line)
+                            y -= line_height
+                            if y < m:
+                                c.showPage()
+                                c.setFont("Helvetica", 10)
+                                y = ph - m
+                        current_line = word
+                
+                if current_line:
+                    c.drawString(m, y, current_line)
+                    y -= line_height
+            
+            # Check if we need a new page
+            if y < m:
+                c.showPage()
+                c.setFont("Helvetica", 10)
+                y = ph - m
+
+        c.save()
+
+        pdf_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        return {
+            "success": True,
+            "title": title.strip(),
+            "page_size": page_size,
+            "pdf_base64": pdf_b64,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 def pdf_template_create(title: str, fields: List[Dict[str, Any]], page_size: str = "A4", margin_mm: int = 20) -> Dict[str, Any]:
     try:
         if not title.strip():
@@ -123,7 +217,20 @@ if __name__ == "__main__":
     
     command = sys.argv[1]
     
-    if command == "template":
+    if command == "content":
+        if len(sys.argv) < 5:
+            print(json.dumps({"success": False, "error": "Missing content arguments"}))
+            sys.exit(1)
+        
+        title = sys.argv[2]
+        content = sys.argv[3]
+        page_size = sys.argv[4]
+        margin_mm = int(sys.argv[5]) if len(sys.argv) > 5 else 20
+        
+        result = pdf_content_create(title, content, page_size, margin_mm)
+        print(json.dumps(result))
+        
+    elif command == "template":
         if len(sys.argv) < 6:
             print(json.dumps({"success": False, "error": "Missing template arguments"}))
             sys.exit(1)
