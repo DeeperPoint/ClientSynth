@@ -12,7 +12,8 @@
     "test:backend": "tsx scripts/run-tests.ts",
     "test:e2e": "jest --testPathPattern=e2e",
     "test:integration": "jest --testPathPattern=integration",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "mcp:server": "tsx mcp-server/index.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "latest",
