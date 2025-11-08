@@ -323,6 +323,7 @@ Generate the complete document content now. Be thorough and comprehensive:`
   ): Record<string, any> {
     const sections = templateConfig.sections || []
     const parsedContent: Record<string, any> = {}
+    const hasTableSections = sections.some(section => section.type === 'table')
     
     // Split content into lines for analysis
     const contentLines = fullContent.split('\n')
@@ -352,18 +353,28 @@ Generate the complete document content now. Be thorough and comprehensive:`
         if (!parsedContent[placeholderKey]) {
           // Collect text content, skipping already used lines and tables
           const textLines: string[] = []
+          let inTableBlock = false
           for (let i = 0; i < contentLines.length; i++) {
             if (usedLines.has(i)) continue
             const line = contentLines[i].trim()
             
-            // Skip markdown headers (they're titles), table separators, and empty lines at start
-            if (line.match(/^#{1,6}\s/) || line.match(/^[-:|]+$/)) {
-              continue
+            if (hasTableSections) {
+              if (line.includes('|')) {
+                inTableBlock = true
+                continue
+              }
+
+              if (inTableBlock) {
+                if (!line) {
+                  inTableBlock = false
+                }
+                continue
+              }
             }
-            
-            // Stop if we hit a table
-            if (line.includes('|') && !line.match(/^[A-Z\s]+\|/)) {
-              break
+
+            // Skip table separator-only lines only when dedicated table sections exist
+            if (hasTableSections && line.match(/^[-:|]+$/)) {
+              continue
             }
             
             if (line) {
@@ -381,6 +392,11 @@ Generate the complete document content now. Be thorough and comprehensive:`
         
         if (!parsedContent[placeholderKey]) {
           const tableData = this.extractTableFromContent(contentLines, section.headers, usedLines)
+          if (tableData.length === 0) {
+            console.warn('[PDFTemplateService] No table rows extracted for placeholder', placeholderKey)
+          } else {
+            console.debug('[PDFTemplateService] Extracted table rows for placeholder', placeholderKey, tableData)
+          }
           parsedContent[placeholderKey] = tableData.length > 0 
             ? tableData 
             : this.generateDefaultTableData(section.headers)
@@ -410,6 +426,8 @@ Generate the complete document content now. Be thorough and comprehensive:`
   ): any[][] {
     const rows: any[][] = []
     
+    let derivedHeaders: string[] | null = headers && headers.length > 0 ? headers : null
+
     // Look for markdown table format (| col1 | col2 |)
     for (let i = 0; i < contentLines.length; i++) {
       if (usedLines.has(i)) continue
@@ -428,16 +446,24 @@ Generate the complete document content now. Be thorough and comprehensive:`
           .filter(c => c && !c.match(/^[-:]+$/))
         
         // Check if this looks like a data row (not header)
-        if (cells.length >= headers.length) {
-          // Skip if it's clearly a header row (all caps or too long)
-          const isHeader = cells[0].match(/^[A-Z\s]+$/) && cells[0].length > 20
-          if (!isHeader) {
-            rows.push(cells.slice(0, headers.length))
-            usedLines.add(i)
-            if (rows.length >= 5) break // Limit to 5 rows
-          }
+        // Derive headers if not provided
+        if (!derivedHeaders || derivedHeaders.length === 0) {
+          derivedHeaders = cells
+          usedLines.add(i)
+          continue
+        }
+
+        if (cells.length >= derivedHeaders.length) {
+          rows.push(cells.slice(0, derivedHeaders.length))
+          usedLines.add(i)
+          if (rows.length >= 25) break // Allow more rows for invoices
         }
       }
+    }
+
+    // If headers were derived locally and original headers array was empty, update it
+    if ((headers === undefined || headers.length === 0) && derivedHeaders) {
+      headers.splice(0, headers.length, ...derivedHeaders)
     }
 
     // If no markdown table found, try to parse JSON structures

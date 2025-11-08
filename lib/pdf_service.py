@@ -1,7 +1,8 @@
 import base64
 import io
-from typing import Any, Dict, List, Optional
 import json
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from pypdf import PdfReader, PdfWriter
@@ -344,14 +345,25 @@ def pdf_template_generate(
                         fontSize=section_font.get("size", default_size),
                         spaceAfter=section.get("spaceAfter", 6)
                     )
-                    story.append(Paragraph(content.replace("\n", "<br/>"), text_style))
+                    flowables = _build_markdown_flowables(
+                        content,
+                        text_style,
+                        ps[0] - 2 * m,
+                        default_font,
+                        default_size,
+                        header_font
+                    )
+                    if flowables:
+                        story.extend(flowables)
+                    else:
+                        story.append(Paragraph(content.replace("\n", "<br/>"), text_style))
                     
             elif section_type == "table":
                 # Dynamic table section
                 if section.get("pageBreakBefore", False):
                     story.append(PageBreak())
                 
-                headers = section.get("headers", [])
+                headers = section.get("headers", []) or []
                 rows_data = section.get("rows")
                 
                 # Handle placeholder for rows data
@@ -359,50 +371,122 @@ def pdf_template_generate(
                     placeholder = rows_data[2:-2].strip()
                     rows_data = data.get(placeholder, [])
                 
+                parsed_headers = []
+                parsed_rows = []
+
+                if isinstance(rows_data, str):
+                    parsed_headers, parsed_rows = _parse_markdown_table(rows_data)
+                    rows_data = parsed_rows
+                    if not headers and parsed_headers:
+                        headers = parsed_headers
+                elif isinstance(rows_data, dict):
+                    potential_headers = rows_data.get("headers")
+                    potential_rows = rows_data.get("rows") or rows_data.get("data") or rows_data.get("values")
+                    if isinstance(potential_rows, list):
+                        rows_data = potential_rows
+                    else:
+                        rows_data = []
+                    if not headers and isinstance(potential_headers, list):
+                        headers = potential_headers
                 if not isinstance(rows_data, list):
                     rows_data = []
-                
+
+                if not headers and rows_data:
+                    first_row = rows_data[0]
+                    if isinstance(first_row, dict):
+                        headers = list(first_row.keys())
+                    elif isinstance(first_row, (list, tuple)):
+                        headers = [f"Column {i+1}" for i in range(len(first_row))]
+
                 # Build table data
-                table_data = [headers] if headers else []
+                table_data = []
+                if headers:
+                    table_data.append([str(h) for h in headers])
+
+                # Ensure consistent row width
+                target_length = len(headers) if headers else max((len(row) for row in rows_data if isinstance(row, (list, tuple))), default=0)
+
                 for row in rows_data:
                     if isinstance(row, dict):
-                        # Convert dict to list based on headers
-                        table_data.append([str(row.get(h, "")) for h in headers])
-                    elif isinstance(row, list):
-                        table_data.append([str(cell) for cell in row])
-                
+                        row_values = [
+                            str(_extract_dict_value_for_header(row, header))
+                            for header in headers
+                        ]
+                    elif isinstance(row, (list, tuple)):
+                        row_values = [str(cell) for cell in row]
+                    else:
+                        continue
+
+                    if headers:
+                        if len(row_values) < len(headers):
+                            row_values.extend([""] * (len(headers) - len(row_values)))
+                        elif len(row_values) > len(headers):
+                            row_values = row_values[:len(headers)]
+                    elif target_length:
+                        if len(row_values) < target_length:
+                            row_values.extend([""] * (target_length - len(row_values)))
+                        elif len(row_values) > target_length:
+                            row_values = row_values[:target_length]
+
+                    table_data.append(row_values)
+
+                # If no rows were added but we have headers, keep at least the header row
+                if not table_data and headers:
+                    table_data.append([str(h) for h in headers])
+
                 if table_data:
-                    # Create table
                     table_style_config = section.get("style", {})
                     col_widths = table_style_config.get("columnWidths")
-                    if col_widths and len(col_widths) == len(headers):
-                        # Convert to actual widths
+                    if col_widths and headers and len(col_widths) == len(headers):
                         available_width = ps[0] - 2 * m
                         col_widths = [w * available_width for w in col_widths]
-                    
-                    table = Table(table_data, colWidths=col_widths)
-                    
-                    # Apply table style
+                    elif headers and not col_widths and len(headers) > 0:
+                        available_width = ps[0] - 2 * m
+                        col_widths = [available_width / len(headers)] * len(headers)
+                    else:
+                        col_widths = None
+
+                    try:
+                        table = Table(table_data, colWidths=col_widths)
+                        table.hAlign = "LEFT"
+                    except Exception:
+                        # Fallback: render as paragraphs if table creation fails
+                        fallback_text = _markdown_to_paragraph_text(_table_to_markdown(headers, rows_data))
+                        story.append(Paragraph(fallback_text, custom_styles["normal"]))
+                        story.append(Spacer(1, 6 * mm))
+                        continue
+
                     table_style = [
-                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(table_style_config.get("headerBackground", "#CCCCCC"))),
-                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
                         ("ALIGN", (0, 0), (-1, -1), "LEFT"),
-                        ("FONTNAME", (0, 0), (-1, 0), header_font.get("family", "Helvetica-Bold")),
-                        ("FONTSIZE", (0, 0), (-1, 0), header_font.get("size", 12)),
-                        ("BOTTOMPADDING", (0, 0), (-1, 0), 12),
-                        ("TOPPADDING", (0, 0), (-1, 0), 12),
-                        ("BACKGROUND", (0, 1), (-1, -1), colors.white),
-                        ("FONTNAME", (0, 1), (-1, -1), default_font),
-                        ("FONTSIZE", (0, 1), (-1, -1), default_size),
-                        ("GRID", (0, 0), (-1, -1), 1, colors.grey),
+                        ("FONTNAME", (0, 0), (-1, -1), default_font),
+                        ("FONTSIZE", (0, 0), (-1, -1), default_size),
+                        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                        ("TOPPADDING", (0, 0), (-1, -1), 6),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
                     ]
-                    
-                    # Add alternate row colors if enabled
-                    if table_style_config.get("alternateRows", False):
-                        for i in range(1, len(table_data)):
-                            if i % 2 == 0:
-                                table_style.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#F5F5F5")))
-                    
+
+                    if headers:
+                        table_style.extend([
+                            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(table_style_config.get("headerBackground", "#2D3748"))),
+                            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                            ("FONTNAME", (0, 0), (-1, 0), header_font.get("family", "Helvetica-Bold")),
+                            ("FONTSIZE", (0, 0), (-1, 0), header_font.get("size", 12)),
+                            ("BOTTOMPADDING", (0, 0), (-1, 0), 12),
+                            ("TOPPADDING", (0, 0), (-1, 0), 12),
+                        ])
+
+                        if len(table_data) > 1:
+                            table_style.append(("BACKGROUND", (0, 1), (-1, -1), colors.white))
+                        if table_style_config.get("alternateRows", False):
+                            for i in range(1, len(table_data)):
+                                if i % 2 == 1:
+                                    table_style.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#F7FAFC")))
+                    else:
+                        if table_style_config.get("alternateRows", False):
+                            for i in range(len(table_data)):
+                                if i % 2 == 1:
+                                    table_style.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#F7FAFC")))
+
                     table.setStyle(TableStyle(table_style))
                     story.append(table)
                     story.append(Spacer(1, 6*mm))
@@ -430,6 +514,204 @@ def pdf_template_generate(
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+def _normalize_table_key(value: Any) -> str:
+    return ''.join(ch.lower() for ch in str(value) if ch.isalnum())
+
+
+def _extract_dict_value_for_header(row: Dict[str, Any], header: str) -> Any:
+    if not isinstance(row, dict):
+        return ""
+
+    # Direct match
+    if header in row:
+        return row[header]
+
+    normalized_header = _normalize_table_key(header)
+    for key, value in row.items():
+        if _normalize_table_key(key) == normalized_header:
+            return value
+
+    return ""
+
+
+def _parse_markdown_table(table_str: str) -> Tuple[List[str], List[List[str]]]:
+    headers: List[str] = []
+    rows: List[List[str]] = []
+
+    if not isinstance(table_str, str):
+        return headers, rows
+
+    lines = table_str.splitlines()
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or "|" not in stripped:
+            continue
+
+        # Skip separator rows
+        candidate = stripped.replace("|", "").strip()
+        if candidate and all(ch in "-:=" for ch in candidate):
+            continue
+
+        parts = [cell.strip() for cell in stripped.strip("|").split("|")]
+        parts = [cell for cell in parts if cell]
+        if not parts:
+            continue
+
+        # Skip rows that are only separators after trimming
+        if all(not cell or set(cell) <= set("-:= ") for cell in parts):
+            continue
+
+        if not headers:
+            headers = parts
+            continue
+
+        rows.append(parts)
+
+    return headers, rows
+
+
+def _block_is_markdown_table(block: str) -> bool:
+    if not isinstance(block, str):
+        return False
+    lines = [line for line in block.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return False
+    if not all('|' in line for line in lines[:2]):
+        return False
+    header_line = lines[0]
+    divider_line = lines[1]
+    return ':' in divider_line or '-' in divider_line
+
+
+def _markdown_to_paragraph_text(text: str) -> str:
+    if not isinstance(text, str):
+        return str(text)
+
+    lines = []
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+
+        if not stripped:
+            lines.append("")
+            continue
+
+        # Headings
+        if stripped.startswith("### "):
+            stripped = f"<b>{stripped[4:].strip()}</b>"
+        elif stripped.startswith("## "):
+            stripped = f"<b>{stripped[3:].strip()}</b>"
+        elif stripped.startswith("# "):
+            stripped = f"<b>{stripped[2:].strip()}</b>"
+
+        # Bullet points
+        elif stripped.startswith("- "):
+            stripped = f"&bull; {stripped[2:].strip()}"
+        elif stripped.startswith("* "):
+            stripped = f"&bull; {stripped[2:].strip()}"
+
+        # Bold text
+        stripped = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", stripped)
+
+        lines.append(stripped)
+
+    # Collapse multiple consecutive blank lines
+    paragraph_lines: List[str] = []
+    blank_count = 0
+    for line in lines:
+        if not line:
+            blank_count += 1
+            if blank_count <= 1:
+                paragraph_lines.append("")
+        else:
+            blank_count = 0
+            paragraph_lines.append(line)
+
+    return "<br/>".join(paragraph_lines)
+
+
+def _build_markdown_flowables(
+    content: str,
+    text_style: ParagraphStyle,
+    available_width: float,
+    default_font: str,
+    default_size: int,
+    header_font: Dict[str, Any]
+) -> List[Any]:
+    flowables: List[Any] = []
+    if not isinstance(content, str):
+        flowables.append(Paragraph(str(content), text_style))
+        return flowables
+
+    blocks = re.split(r"\n{2,}", content.strip())
+    for block in blocks:
+        normalized_block = block.strip()
+        if not normalized_block:
+            continue
+
+        if _block_is_markdown_table(normalized_block):
+            headers, rows = _parse_markdown_table(normalized_block)
+            if headers or rows:
+                table_data: List[List[str]] = []
+                if headers:
+                    table_data.append([str(h) for h in headers])
+                for row in rows:
+                    table_data.append([str(cell) for cell in row])
+
+                if table_data:
+                    try:
+                        col_widths = None
+                        if headers and len(headers) > 0:
+                            col_widths = [available_width / len(headers)] * len(headers)
+
+                        table = Table(table_data, colWidths=col_widths)
+                        table.hAlign = "LEFT"
+                        table.repeatRows = 1 if headers else 0
+
+                        table_style = [
+                            ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                            ("FONTNAME", (0, 0), (-1, -1), default_font),
+                            ("FONTSIZE", (0, 0), (-1, -1), default_size),
+                            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                            ("TOPPADDING", (0, 0), (-1, -1), 6),
+                            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                        ]
+
+                        if headers:
+                            table_style.extend([
+                                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2D3748")),
+                                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                                ("FONTNAME", (0, 0), (-1, 0), header_font.get("family", "Helvetica-Bold")),
+                                ("FONTSIZE", (0, 0), (-1, 0), header_font.get("size", 12)),
+                                ("BOTTOMPADDING", (0, 0), (-1, 0), 12),
+                                ("TOPPADDING", (0, 0), (-1, 0), 12),
+                            ])
+                            if len(table_data) > 1:
+                                table_style.append(("BACKGROUND", (0, 1), (-1, -1), colors.white))
+
+                        table.setStyle(TableStyle(table_style))
+                        flowables.append(table)
+                        flowables.append(Spacer(1, 6 * mm))
+                    except Exception:
+                        fallback_text = _markdown_to_paragraph_text(normalized_block)
+                        if fallback_text:
+                            flowables.append(Paragraph(fallback_text, text_style))
+        else:
+            paragraph_text = _markdown_to_paragraph_text(normalized_block)
+            if paragraph_text:
+                flowables.append(Paragraph(paragraph_text, text_style))
+
+    return flowables
+
+
+def _table_to_markdown(headers: List[str], rows: List[List[str]]) -> str:
+    header_line = "| " + " | ".join(str(h) for h in headers) + " |" if headers else ""
+    divider_line = "| " + " | ".join("---" for _ in headers) + " |" if headers else ""
+    row_lines = ["| " + " | ".join(str(cell) for cell in row) + " |" for row in rows]
+    lines = [line for line in [header_line, divider_line] + row_lines if line]
+    return "\n".join(lines)
 
 
 def _replace_placeholders(text: str, data: Dict[str, Any]) -> str:

@@ -34,7 +34,7 @@ export default function PDFTemplatesPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isCreating, setIsCreating] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
-  const [selectedTemplate, setSelectedTemplate] = useState<string>("")
+  const [selectedTemplateKey, setSelectedTemplateKey] = useState<string>("")
   const [generatedPdf, setGeneratedPdf] = useState<string | null>(null)
   const [stats, setStats] = useState<UsageStats | null>(null)
   
@@ -164,8 +164,11 @@ export default function PDFTemplatesPage() {
     }
   }
 
+  const makeTemplateKey = (template: PDFTemplate) => `${template.id}:${template.version}`
+  const selectedTemplateMeta = templates.find((template) => makeTemplateKey(template) === selectedTemplateKey) || null
+
   const handleGeneratePDF = async () => {
-    if (!selectedTemplate) {
+    if (!selectedTemplateMeta) {
       alert("Please select a template")
       return
     }
@@ -185,7 +188,8 @@ export default function PDFTemplatesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "generate",
-          templateName: selectedTemplate,
+          templateName: selectedTemplateMeta.name,
+          version: selectedTemplateMeta.version,
           data,
         }),
       })
@@ -302,13 +306,13 @@ export default function PDFTemplatesPage() {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="template-select">Template</Label>
-                <Select value={selectedTemplate} onValueChange={setSelectedTemplate}>
+                <Select value={selectedTemplateKey} onValueChange={setSelectedTemplateKey}>
                   <SelectTrigger id="template-select">
                     <SelectValue placeholder="Select a template" />
                   </SelectTrigger>
                   <SelectContent>
                     {templates.map((template) => (
-                      <SelectItem key={`${template.name}-${template.version}`} value={template.name}>
+                      <SelectItem key={`${template.id}-${template.version}`} value={makeTemplateKey(template)}>
                         {template.name} (v{template.version})
                         {template.description && ` - ${template.description}`}
                       </SelectItem>
@@ -334,7 +338,7 @@ export default function PDFTemplatesPage() {
 
               <Button
                 onClick={handleGeneratePDF}
-                disabled={isGenerating || !selectedTemplate}
+                disabled={isGenerating || !selectedTemplateMeta}
                 className="w-full"
               >
                 {isGenerating ? (
@@ -510,7 +514,7 @@ export default function PDFTemplatesPage() {
                             size="sm"
                             variant="outline"
                             onClick={() => {
-                              setSelectedTemplate(template.name)
+                              setSelectedTemplateKey(makeTemplateKey(template))
                               // Switch to generate tab
                               const tabsList = document.querySelector('[role="tablist"]')
                               const generateTab = tabsList?.querySelector('[value="generate"]') as HTMLElement
@@ -532,5 +536,6 @@ export default function PDFTemplatesPage() {
     </div>
   )
 }
+
 
 
