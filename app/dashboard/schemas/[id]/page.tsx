@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { ArrowLeft, Edit, Play, FileText, Users, Calendar, Sparkles } from "lucide-react"
 import { ExampleFilesManager } from "@/components/example-files-manager"
+import { ExampleFileUpload } from "@/components/example-file-upload"
 import { toast } from "sonner"
 import Link from "next/link"
 
@@ -55,13 +56,14 @@ export default function SchemaEditPage() {
         body: JSON.stringify({
           action: 'select',
           table: 'schemas',
-          columns: 'id,name,description,schema_definition,created_at,created_by',
-          where: { op: 'eq', column: 'id', value: schemaId },
+          columns: 'schemas.id,schemas.name,schemas.description,schemas.schema_definition,schemas.created_at,schemas.created_by,profiles.full_name',
+          where: { op: 'eq', column: 'schemas.id', value: schemaId },
           join: {
             table: 'profiles',
             on: 'schemas.created_by = profiles.id',
-            columns: 'full_name'
-          }
+            type: 'LEFT'
+          },
+          single: true
         }),
       })
 
@@ -71,8 +73,21 @@ export default function SchemaEditPage() {
       }
 
       const data = await response.json()
-      if (data.data && data.data.length > 0) {
-        setSchema(data.data[0])
+      if (data.data) {
+        // Transform data to match expected structure (similar to list page)
+        const schemaData = data.data
+        const transformed = {
+          id: schemaData.id,
+          name: schemaData.name,
+          description: schemaData.description,
+          schema_definition: schemaData.schema_definition,
+          created_at: schemaData.created_at,
+          created_by: schemaData.created_by,
+          profiles: {
+            full_name: schemaData.full_name || 'Unknown'
+          }
+        }
+        setSchema(transformed)
       } else {
         setError("Schema not found")
       }
@@ -161,7 +176,7 @@ export default function SchemaEditPage() {
             </Link>
           </Button>
           <Button asChild>
-            <Link href={`/dashboard/schema/edit/${schema.id}`}>
+            <Link href={`/dashboard/schemas/${schema.id}/edit`}>
               <Edit className="h-4 w-4 mr-2" />
               Edit Schema
             </Link>
@@ -229,11 +244,7 @@ export default function SchemaEditPage() {
         </CardContent>
       </Card>
 
-      {/* Example Files Manager */}
-      <ExampleFilesManager
-        schemaId={schemaId}
-        schemaFieldNames={schema.schema_definition.fields.map(f => f.name)}
-      />
+      {/* After save: keep this page focused on schema overview and generation */}
     </div>
   )
 }

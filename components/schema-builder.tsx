@@ -61,6 +61,13 @@ export function SchemaBuilder() {
   const [schemaDescription, setSchemaDescription] = useState("")
   const [fields, setFields] = useState<SchemaField[]>([])
   const [isSaving, setIsSaving] = useState(false)
+  const [createdSchemaId, setCreatedSchemaId] = useState<string | null>(null)
+  const [uploadSummary, setUploadSummary] = useState<{
+    totalFiles: number
+    completedFiles: number
+    failedFiles: number
+    results: Array<{ fileName: string; status: 'success' | 'failed'; recordCount?: number }>
+  } | null>(null)
   const router = useRouter()
   // Use server APIs for auth and DB (Postgres)
 
@@ -84,8 +91,8 @@ export function SchemaBuilder() {
   }
 
   const saveSchema = async () => {
-    if (!schemaName.trim() || fields.length === 0) {
-      alert("Please provide a schema name and at least one field")
+    if (!schemaName.trim()) {
+      alert("Please provide a schema name")
       return
     }
 
@@ -158,6 +165,76 @@ export function SchemaBuilder() {
       alert(`Failed to save schema: ${error instanceof Error ? error.message : "Unknown error"}`)
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  // Ensure a schema exists for uploads; auto-create minimal schema if needed
+  const ensureSchemaId = async (): Promise<string> => {
+    if (createdSchemaId) return createdSchemaId
+
+    const nameToUse = schemaName.trim() || `Untitled Schema ${new Date().toLocaleString()}`
+    try {
+      const meRes = await fetch('/api/auth/me', { cache: 'no-store' })
+      const meJson = await meRes.json()
+      if (!meJson?.data?.user?.id) throw new Error("Not authenticated")
+
+      let tenantId: string | null = null
+      try {
+        const tenantsRes = await fetch('/api/user/tenants', { cache: 'no-store' })
+        if (tenantsRes.ok) {
+          const tenants = await tenantsRes.json()
+          if (Array.isArray(tenants) && tenants.length > 0) {
+            tenantId = tenants[0].id
+          }
+        }
+      } catch {}
+      if (!tenantId) {
+        await fetch('/api/tenants/create-default', { method: 'POST' })
+        const tenantsRes2 = await fetch('/api/user/tenants', { cache: 'no-store' })
+        if (tenantsRes2.ok) {
+          const tenants = await tenantsRes2.json()
+          if (Array.isArray(tenants) && tenants.length > 0) {
+            tenantId = tenants[0].id
+          }
+        }
+      }
+
+      if (!tenantId) throw new Error('Unable to determine or create tenant')
+
+      const schemaDefinition: SchemaDefinition = {
+        fields: fields.map((field) => ({
+          ...field,
+          name: field.name.trim(),
+        })),
+        metadata: {
+          version: "1.0",
+          created_at: new Date().toISOString(),
+        },
+      }
+
+      const dbRes = await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'insert',
+          table: 'schemas',
+          data: {
+            name: nameToUse,
+            description: schemaDescription.trim(),
+            schema_definition: schemaDefinition,
+            created_by: meJson.data.user.id,
+            tenant_id: tenantId,
+          },
+        }),
+      })
+      const dbJson = await dbRes.json()
+      if (!dbRes.ok) throw new Error(dbJson?.error || 'Failed to create schema')
+
+      setCreatedSchemaId(dbJson.data.id)
+      return dbJson.data.id as string
+    } catch (e) {
+      console.error('Ensure schema failed:', e)
+      throw e
     }
   }
 
@@ -234,23 +311,58 @@ export function SchemaBuilder() {
         </CardContent>
       </Card>
 
-      {fields.length > 0 && (
-        <Card className="glass-effect shadow-medium border-0">
-          <CardHeader>
-            <CardTitle className="text-2xl font-semibold">Example Data (Optional)</CardTitle>
-            <CardDescription className="text-lg">
-              Upload example files to guide AI generation and improve data quality
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-center py-8 text-muted-foreground">
-              <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p className="text-lg font-medium mb-2">Example files will be available after saving</p>
-              <p className="text-sm">Save your schema first, then you can upload example files to improve AI generation</p>
+      <Card className="glass-effect shadow-medium border-0">
+        <CardHeader>
+          <CardTitle className="text-2xl font-semibold">Example Data (Optional)</CardTitle>
+          <CardDescription className="text-lg">
+            Upload example files to guide AI generation and improve data quality
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ExampleFileUpload
+            schemaId={createdSchemaId || undefined}
+            schemaFields={fields}
+            ensureSchemaId={ensureSchemaId}
+            onUploadComplete={() => {}}
+            onUploadSummary={(s) => {
+              setUploadSummary({
+                totalFiles: s.totalFiles,
+                completedFiles: s.completedFiles,
+                failedFiles: s.failedFiles,
+                results: (s.results || []).map(r => ({ fileName: r.fileName, status: r.status, recordCount: r.recordCount }))
+              })
+            }}
+          />
+          {uploadSummary && (
+            <div className="mt-6 space-y-3">
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <span className="font-medium">Upload Summary:</span>
+                <span>{uploadSummary.completedFiles}/{uploadSummary.totalFiles} completed</span>
+                <span>•</span>
+                <span>{uploadSummary.failedFiles} failed</span>
+              </div>
+              <div className="border rounded-lg">
+                <div className="grid grid-cols-3 gap-2 p-3 text-sm font-medium bg-muted/50">
+                  <div>File</div>
+                  <div>Status</div>
+                  <div className="text-right">Examples</div>
+                </div>
+                <div className="divide-y">
+                  {uploadSummary.results.map((r, idx) => (
+                    <div key={idx} className="grid grid-cols-3 gap-2 p-3 text-sm">
+                      <div className="truncate" title={r.fileName}>{r.fileName}</div>
+                      <div className={r.status === 'success' ? 'text-green-600' : 'text-red-600'}>
+                        {r.status === 'success' ? 'Completed' : 'Failed'}
+                      </div>
+                      <div className="text-right">{r.recordCount ?? 0}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
 
       <Card className="glass-effect shadow-medium border-0">
         <CardHeader>
@@ -429,21 +541,19 @@ export function SchemaBuilder() {
         <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
           <Button
             variant="outline"
-            disabled={fields.length === 0}
             size="lg"
             className="w-full sm:w-auto border-accent/20 hover:bg-accent/5 bg-transparent"
             aria-label="Preview schema"
-            aria-disabled={fields.length === 0}
           >
             Preview
           </Button>
           <Button
             onClick={saveSchema}
-            disabled={isSaving || !schemaName.trim() || fields.length === 0}
+            disabled={isSaving || !schemaName.trim()}
             size="lg"
             className="w-full sm:w-auto gradient-primary text-white shadow-medium"
             aria-label={isSaving ? "Saving schema..." : "Save schema"}
-            aria-disabled={isSaving || !schemaName.trim() || fields.length === 0}
+            aria-disabled={isSaving || !schemaName.trim()}
           >
             {isSaving ? (
               <>

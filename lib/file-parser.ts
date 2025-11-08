@@ -90,11 +90,17 @@ export class FileParser {
       }
     }
 
+    // Count actual data rows (excluding header and empty rows)
+    const actualDataRowCount = lines.slice(1).filter(line => {
+      const values = this.parseCSVLine(line)
+      return !values.every(v => !v || !v.trim())
+    }).length
+
     return {
       success: true,
       data,
       fieldNames,
-      totalRows: lines.length - 1
+      totalRows: actualDataRowCount // Count actual data rows, not including header
     }
   }
 

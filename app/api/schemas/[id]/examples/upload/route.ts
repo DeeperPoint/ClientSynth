@@ -69,9 +69,8 @@ export async function POST(
     const fileBuffer = await file.arrayBuffer()
     const md5Hash = crypto.createHash("md5").update(Buffer.from(fileBuffer)).digest("hex")
     const fileExtension = file.name.split('.').pop()?.toLowerCase() || 'unknown'
-    const fileType = fileExtension === 'csv' ? 'csv' : 
-                    fileExtension === 'json' ? 'json' : 
-                    ['xlsx', 'xls'].includes(fileExtension) ? fileExtension : 'unknown'
+    const allowedTypes = new Set(['csv','json','xlsx','xls'])
+    const fileType = allowedTypes.has(fileExtension) ? fileExtension : 'json'
 
     // Try S3 upload first, fallback to local storage
     let uploadResult
@@ -110,7 +109,7 @@ export async function POST(
       fileType,
       file.size,
       uploadResult.key,
-      uploadResult.bucket,
+      (uploadResult as any).bucket ?? 'local',
       md5Hash,
       user.id
     ])
@@ -197,25 +196,24 @@ export async function GET(
       ORDER BY ef.created_at DESC
     `, [schemaId, user.id])
 
-    // Get example data summary
-    const examplesResult = await query(`
+    // Get example data summary per file
+    const examplesPerFileResult = await query(`
       SELECT 
-        ed.field_name,
-        COUNT(DISTINCT ed.example_value) as unique_values,
+        ef.id as example_file_id,
         COUNT(*) as total_examples
       FROM example_data ed
       JOIN example_files ef ON ed.example_file_id = ef.id
       JOIN schemas s ON ef.schema_id = s.id
       JOIN user_tenant_roles utr ON s.tenant_id = utr.tenant_id
       WHERE ef.schema_id = $1 AND utr.user_id = $2
-      GROUP BY ed.field_name
-      ORDER BY ed.field_name
+      GROUP BY ef.id
+      ORDER BY ef.created_at DESC
     `, [schemaId, user.id])
 
     return NextResponse.json({
       success: true,
       files: filesResult.rows,
-      examples: examplesResult.rows
+      examplesPerFile: examplesPerFileResult.rows
     })
 
   } catch (error) {

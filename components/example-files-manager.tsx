@@ -32,6 +32,7 @@ interface ExampleFilesManagerProps {
 export function ExampleFilesManager({ schemaId, schemaFieldNames }: ExampleFilesManagerProps) {
   const [files, setFiles] = useState<ExampleFile[]>([])
   const [examples, setExamples] = useState<ExampleData[]>([])
+  const [examplesPerFile, setExamplesPerFile] = useState<Record<string, number>>({})
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showUpload, setShowUpload] = useState(false)
@@ -53,6 +54,11 @@ export function ExampleFilesManager({ schemaId, schemaFieldNames }: ExampleFiles
       const data = await response.json()
       setFiles(data.files || [])
       setExamples(data.examples || [])
+      const perFile: Record<string, number> = {}
+      ;(data.examplesPerFile || []).forEach((row: { example_file_id: string; total_examples: number }) => {
+        perFile[row.example_file_id] = Number(row.total_examples) || 0
+      })
+      setExamplesPerFile(perFile)
     } catch (error) {
       console.error("Error loading example files:", error)
       setError(error instanceof Error ? error.message : "Failed to load example files")
@@ -116,13 +122,9 @@ export function ExampleFilesManager({ schemaId, schemaFieldNames }: ExampleFiles
                 Example Files
               </CardTitle>
               <CardDescription>
-                Upload example data to improve AI generation quality
+                Uploaded example data for this schema
               </CardDescription>
             </div>
-            <Button onClick={() => setShowUpload(!showUpload)}>
-              <Upload className="h-4 w-4 mr-2" />
-              {showUpload ? "Cancel" : "Upload File"}
-            </Button>
           </div>
         </CardHeader>
         <CardContent>
@@ -131,16 +133,6 @@ export function ExampleFilesManager({ schemaId, schemaFieldNames }: ExampleFiles
               <AlertCircle className="h-4 w-4" />
               <AlertDescription>{error}</AlertDescription>
             </Alert>
-          )}
-
-          {showUpload && (
-            <div className="mb-6">
-              <ExampleFileUpload
-                schemaId={schemaId}
-                schemaFieldNames={schemaFieldNames}
-                onUploadComplete={handleUploadComplete}
-              />
-            </div>
           )}
 
           {files.length === 0 ? (
@@ -168,7 +160,7 @@ export function ExampleFilesManager({ schemaId, schemaFieldNames }: ExampleFiles
                   </div>
                   <div className="flex items-center gap-2">
                     <Badge variant="secondary">
-                      {examples.find(e => e.field_name === file.file_name)?.total_examples || 0} examples
+                      {examplesPerFile[file.id] ?? 0} examples
                     </Badge>
                     <Button variant="ghost" size="sm">
                       <Download className="h-4 w-4" />
