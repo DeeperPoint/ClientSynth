@@ -6,7 +6,7 @@ import { useState, useEffect, useRef } from "react"
 // Removed Supabase imports - using custom auth
 import { TenantSwitcher } from "@/components/tenant-switcher"
 import { Button } from "@/components/ui/button"
-import { LogOut, Settings, UserIcon, FileText, Play, Download, Sparkles } from "lucide-react"
+import { LogOut, Settings, UserIcon, FileText, Play, Download, Sparkles, FileCode } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -166,6 +166,7 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
     },
     { name: "Job Console", href: "/dashboard/jobs", icon: Play, current: pathname.startsWith("/dashboard/jobs") },
     { name: "Exports", href: "/dashboard/exports", icon: Download, current: pathname.startsWith("/dashboard/exports") },
+    { name: "PDF Templates", href: "/dashboard/pdf-templates", icon: FileCode, current: pathname.startsWith("/dashboard/pdf-templates") },
   ]
 
   return (
