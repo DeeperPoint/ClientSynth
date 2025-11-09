@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
@@ -14,6 +13,7 @@ interface MediaItem {
   id: string
   s3_key: string
   s3_bucket: string
+  tenant_id: string
   width: number
   height: number
   file_size: number
@@ -34,23 +34,31 @@ export function ImageGallery({ jobId, tenantId }: ImageGalleryProps) {
   const [selectedImage, setSelectedImage] = useState<MediaItem | null>(null)
   const [regenerating, setRegenerating] = useState<string | null>(null)
 
-  const supabase = createClient()
-
   useEffect(() => {
     loadImages()
   }, [jobId])
 
   const loadImages = async () => {
     try {
-      const { data, error } = await supabase
-        .from("media")
-        .select("*")
-        .eq("job_id", jobId)
-        .eq("tenant_id", tenantId)
-        .order("created_at", { ascending: false })
+      const response = await fetch("/api/db", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "select",
+          table: "media",
+          columns: "*",
+          where: { op: "eq", column: "job_id", value: jobId },
+          orderBy: { column: "created_at", ascending: false },
+        }),
+      })
 
-      if (error) throw error
-      setImages(data || [])
+      if (!response.ok) {
+        throw new Error("Failed to load images")
+      }
+
+      const result = await response.json()
+      const items: MediaItem[] = (result.data || []).filter((item: MediaItem) => item.tenant_id === tenantId)
+      setImages(items)
     } catch (error) {
       console.error("Failed to load images:", error)
     } finally {
@@ -89,9 +97,20 @@ export function ImageGallery({ jobId, tenantId }: ImageGalleryProps) {
 
   const deleteImage = async (item: MediaItem) => {
     try {
-      const { error } = await supabase.from("media").delete().eq("id", item.id)
+      const response = await fetch("/api/db", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "delete",
+          table: "media",
+          where: { op: "eq", column: "id", value: item.id },
+        }),
+      })
 
-      if (error) throw error
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}))
+        throw new Error(result.error || "Failed to delete image")
+      }
       setImages(images.filter((img) => img.id !== item.id))
     } catch (error) {
       console.error("Failed to delete image:", error)

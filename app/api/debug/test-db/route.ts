@@ -1,13 +1,10 @@
 import { NextResponse } from "next/server"
-import { query } from "@/lib/postgres/client"
-import { createClient } from "@/lib/supabase/server"
+import { getCurrentUser, query } from "@/lib/postgres/client"
 
 export async function GET() {
   try {
     // Get current user
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-
+    const user = await getCurrentUser()
     if (!user) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
     }

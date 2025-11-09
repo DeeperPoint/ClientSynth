@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { ImageGenerationService } from "@/lib/image-generation/image-service"
-import { createClient } from "@/lib/supabase/server"
+import { getCurrentUser, query } from "@/lib/postgres/client"
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,23 +21,17 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify user has access to this tenant
-    const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
+    const user = await getCurrentUser()
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { data: tenantAccess } = await supabase
-      .from("user_tenant_roles")
-      .select("tenant_id")
-      .eq("user_id", user.id)
-      .eq("tenant_id", tenantId)
-      .single()
+    const tenantAccess = await query(
+      `SELECT 1 FROM user_tenant_roles WHERE user_id = $1 AND tenant_id = $2`,
+      [user.id, tenantId]
+    )
 
-    if (!tenantAccess) {
+    if (tenantAccess.rows.length === 0) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 })
     }
 

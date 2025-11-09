@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -75,7 +74,27 @@ export default function JobsPage() {
   const [dateFilter, setDateFilter] = useState("all")
   const [isRefreshing, setIsRefreshing] = useState(false)
 
-  const supabase = createClient()
+  const executeDbAction = async (payload: any) => {
+    const response = await fetch('/api/db', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+
+    let result: any = {}
+    try {
+      result = await response.json()
+    } catch {
+      // ignore parse errors for empty responses
+    }
+
+    if (!response.ok) {
+      const message = result?.error || 'Database request failed'
+      throw new Error(message)
+    }
+
+    return result
+  }
 
   useEffect(() => {
     loadJobs()
@@ -206,9 +225,15 @@ export default function JobsPage() {
     }
 
     try {
-      const { error } = await supabase.from("jobs").delete().in("id", selectedJobs)
-
-      if (error) throw error
+      await Promise.all(
+        selectedJobs.map((jobId) =>
+          executeDbAction({
+            action: 'delete',
+            table: 'jobs',
+            where: { op: 'eq', column: 'id', value: jobId }
+          })
+        )
+      )
 
       setSelectedJobs([])
       await loadJobs()
@@ -222,17 +247,21 @@ export default function JobsPage() {
     if (selectedJobs.length === 0) return
 
     try {
-      const { error } = await supabase
-        .from("jobs")
-        .update({
-          status: "pending",
-          error_message: null,
-          progress: 0,
-          generated_records: 0,
-        })
-        .in("id", selectedJobs)
-
-      if (error) throw error
+      await Promise.all(
+        selectedJobs.map((jobId) =>
+          executeDbAction({
+            action: 'update',
+            table: 'jobs',
+            data: {
+              status: 'pending',
+              error_message: null,
+              progress: 0,
+              generated_records: 0
+            },
+            where: { op: 'eq', column: 'id', value: jobId }
+          })
+        )
+      )
 
       setSelectedJobs([])
       await loadJobs()
@@ -274,17 +303,17 @@ export default function JobsPage() {
 
   const retryJob = async (jobId: string) => {
     try {
-      const { error } = await supabase
-        .from("jobs")
-        .update({
-          status: "pending",
+      await executeDbAction({
+        action: 'update',
+        table: 'jobs',
+        data: {
+          status: 'pending',
           error_message: null,
           progress: 0,
           generated_records: 0,
-        })
-        .eq("id", jobId)
-
-      if (error) throw error
+        },
+        where: { op: 'eq', column: 'id', value: jobId },
+      })
       await loadJobs()
     } catch (error) {
       console.error("Error retrying job:", error)
@@ -298,9 +327,11 @@ export default function JobsPage() {
     }
 
     try {
-      const { error } = await supabase.from("jobs").delete().eq("id", jobId)
-
-      if (error) throw error
+      await executeDbAction({
+        action: 'delete',
+        table: 'jobs',
+        where: { op: 'eq', column: 'id', value: jobId },
+      })
       await loadJobs()
     } catch (error) {
       console.error("Error deleting job:", error)

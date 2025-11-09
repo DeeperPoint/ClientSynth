@@ -1,4 +1,4 @@
-import { createServerClient } from "@/lib/supabase/server"
+import { query } from "@/lib/postgres/client"
 
 export interface CooldownEntry {
   id: string
@@ -11,15 +11,10 @@ export interface CooldownEntry {
 }
 
 export class CooldownTracker {
-  private supabase
   private defaultCooldowns = {
     seed: 60 * 60 * 1000, // 1 hour
     pattern: 30 * 60 * 1000, // 30 minutes
     value: 15 * 60 * 1000, // 15 minutes
-  }
-
-  constructor() {
-    this.supabase = createServerClient()
   }
 
   async addCooldown(
@@ -37,35 +32,32 @@ export class CooldownTracker {
     try {
       // Use seed_usage table for seed cooldowns, create new table for others if needed
       if (resourceType === "seed") {
-        const { error } = await this.supabase.from("seed_usage").insert({
-          seed_id: resourceId,
-          job_id: jobId,
-          context: metadata,
-          cooldown_until: cooldownUntil,
-        })
-
-        if (error) {
-          console.error("[v0] Error adding seed cooldown:", error)
-          throw error
-        }
+        await query(
+          `
+            INSERT INTO seed_usage (seed_id, job_id, context, cooldown_until)
+            VALUES ($1, $2, $3::jsonb, $4)
+          `,
+          [resourceId, jobId, JSON.stringify(metadata), cooldownUntil]
+        )
       } else {
         // For patterns and values, we'll store in generation_patterns with special metadata
-        const { error } = await this.supabase.from("generation_patterns").insert({
-          job_id: jobId,
-          pattern_hash: `${resourceType}_${resourceId}`,
-          pattern_data: {
-            type: "cooldown",
-            resource_type: resourceType,
-            resource_id: resourceId,
-            cooldown_until: cooldownUntil,
-            metadata,
-          },
-        })
-
-        if (error) {
-          console.error("[v0] Error adding cooldown:", error)
-          throw error
-        }
+        await query(
+          `
+            INSERT INTO generation_patterns (job_id, pattern_hash, pattern_data)
+            VALUES ($1, $2, $3::jsonb)
+          `,
+          [
+            jobId,
+            `${resourceType}_${resourceId}`,
+            JSON.stringify({
+              type: "cooldown",
+              resource_type: resourceType,
+              resource_id: resourceId,
+              cooldown_until: cooldownUntil,
+              metadata,
+            }),
+          ]
+        )
       }
 
       console.log("[v0] Cooldown added until:", cooldownUntil)
@@ -81,37 +73,36 @@ export class CooldownTracker {
       const now = new Date().toISOString()
 
       if (resourceType === "seed") {
-        const { data, error } = await this.supabase
-          .from("seed_usage")
-          .select("cooldown_until")
-          .eq("seed_id", resourceId)
-          .gt("cooldown_until", now)
-          .order("cooldown_until", { ascending: false })
-          .limit(1)
+        const result = await query(
+          `
+            SELECT 1
+            FROM seed_usage
+            WHERE seed_id = $1
+              AND cooldown_until > $2
+            ORDER BY cooldown_until DESC
+            LIMIT 1
+          `,
+          [resourceId, now]
+        )
 
-        if (error) {
-          console.error("[v0] Error checking seed cooldown:", error)
-          return false
-        }
-
-        const inCooldown = data && data.length > 0
+        const inCooldown = result.rows.length > 0
         console.log("[v0] Seed cooldown status:", inCooldown)
         return inCooldown
       } else {
-        const { data, error } = await this.supabase
-          .from("generation_patterns")
-          .select("pattern_data")
-          .eq("pattern_hash", `${resourceType}_${resourceId}`)
-          .gt("pattern_data->cooldown_until", now)
-          .order("created_at", { ascending: false })
-          .limit(1)
+        const result = await query(
+          `
+            SELECT pattern_data
+            FROM generation_patterns
+            WHERE pattern_hash = $1
+              AND pattern_data->>'type' = 'cooldown'
+              AND (pattern_data->>'cooldown_until')::timestamptz > $2
+            ORDER BY created_at DESC
+            LIMIT 1
+          `,
+          [`${resourceType}_${resourceId}`, now]
+        )
 
-        if (error) {
-          console.error("[v0] Error checking cooldown:", error)
-          return false
-        }
-
-        const inCooldown = data && data.length > 0
+        const inCooldown = result.rows.length > 0
         console.log("[v0] Cooldown status:", inCooldown)
         return inCooldown
       }
@@ -136,46 +127,45 @@ export class CooldownTracker {
       const now = new Date().toISOString()
 
       if (resourceType === "seed") {
-        const { data, error } = await this.supabase
-          .from("seed_usage")
-          .select("cooldown_until, context")
-          .eq("seed_id", resourceId)
-          .gt("cooldown_until", now)
-          .order("cooldown_until", { ascending: false })
-          .limit(1)
+        const result = await query(
+          `
+            SELECT cooldown_until, context
+            FROM seed_usage
+            WHERE seed_id = $1
+              AND cooldown_until > $2
+            ORDER BY cooldown_until DESC
+            LIMIT 1
+          `,
+          [resourceId, now]
+        )
 
-        if (error) {
-          console.error("[v0] Error getting seed cooldown info:", error)
-          return { inCooldown: false }
-        }
-
-        if (data && data.length > 0) {
-          const cooldownUntil = data[0].cooldown_until
+        if (result.rows.length > 0) {
+          const cooldownUntil = result.rows[0].cooldown_until
           const remainingTime = new Date(cooldownUntil).getTime() - Date.now()
 
           return {
             inCooldown: true,
             cooldownUntil,
             remainingTime,
-            metadata: data[0].context,
+            metadata: result.rows[0].context,
           }
         }
       } else {
-        const { data, error } = await this.supabase
-          .from("generation_patterns")
-          .select("pattern_data")
-          .eq("pattern_hash", `${resourceType}_${resourceId}`)
-          .gt("pattern_data->cooldown_until", now)
-          .order("created_at", { ascending: false })
-          .limit(1)
+        const result = await query(
+          `
+            SELECT pattern_data
+            FROM generation_patterns
+            WHERE pattern_hash = $1
+              AND pattern_data->>'type' = 'cooldown'
+              AND (pattern_data->>'cooldown_until')::timestamptz > $2
+            ORDER BY created_at DESC
+            LIMIT 1
+          `,
+          [`${resourceType}_${resourceId}`, now]
+        )
 
-        if (error) {
-          console.error("[v0] Error getting cooldown info:", error)
-          return { inCooldown: false }
-        }
-
-        if (data && data.length > 0) {
-          const patternData = data[0].pattern_data
+        if (result.rows.length > 0) {
+          const patternData = result.rows[0].pattern_data as any
           const cooldownUntil = patternData.cooldown_until
           const remainingTime = new Date(cooldownUntil).getTime() - Date.now()
 
@@ -207,37 +197,32 @@ export class CooldownTracker {
       const now = new Date().toISOString()
 
       // Count seed cooldowns
-      let seedQuery = this.supabase.from("seed_usage").select("id", { count: "exact" }).gt("cooldown_until", now)
-
-      if (jobId) {
-        seedQuery = seedQuery.eq("job_id", jobId)
-      }
-
-      const { count: seedCount, error: seedError } = await seedQuery
-
-      if (seedError) {
-        console.error("[v0] Error counting seed cooldowns:", seedError)
-      }
+      const seedCountResult = await query<{ count: string }>(
+        `
+          SELECT COUNT(*)::text AS count
+          FROM seed_usage
+          WHERE cooldown_until > $1
+          ${jobId ? "AND job_id = $2" : ""}
+        `,
+        jobId ? [now, jobId] : [now]
+      )
+      const seedCount = parseInt(seedCountResult.rows[0]?.count || "0", 10)
 
       // Count pattern and value cooldowns
-      let patternQuery = this.supabase
-        .from("generation_patterns")
-        .select("id", { count: "exact" })
-        .gt("pattern_data->cooldown_until", now)
-        .eq("pattern_data->type", "cooldown")
+      const patternCountResult = await query<{ count: string }>(
+        `
+          SELECT COUNT(*)::text AS count
+          FROM generation_patterns
+          WHERE pattern_data->>'type' = 'cooldown'
+            AND (pattern_data->>'cooldown_until')::timestamptz > $1
+            ${jobId ? "AND job_id = $2" : ""}
+        `,
+        jobId ? [now, jobId] : [now]
+      )
+      const patternCount = parseInt(patternCountResult.rows[0]?.count || "0", 10)
 
-      if (jobId) {
-        patternQuery = patternQuery.eq("job_id", jobId)
-      }
-
-      const { count: patternCount, error: patternError } = await patternQuery
-
-      if (patternError) {
-        console.error("[v0] Error counting pattern cooldowns:", patternError)
-      }
-
-      const seeds = seedCount || 0
-      const patterns = patternCount || 0
+      const seeds = seedCount
+      const patterns = patternCount
       const values = 0 // Would need separate tracking for values
       const total = seeds + patterns + values
 
@@ -257,22 +242,17 @@ export class CooldownTracker {
       const now = new Date().toISOString()
 
       // Clean up expired seed cooldowns
-      const { error: seedError } = await this.supabase.from("seed_usage").delete().lt("cooldown_until", now)
-
-      if (seedError) {
-        console.error("[v0] Error cleaning up seed cooldowns:", seedError)
-      }
+      await query(`DELETE FROM seed_usage WHERE cooldown_until < $1`, [now])
 
       // Clean up expired pattern cooldowns
-      const { error: patternError } = await this.supabase
-        .from("generation_patterns")
-        .delete()
-        .lt("pattern_data->cooldown_until", now)
-        .eq("pattern_data->type", "cooldown")
-
-      if (patternError) {
-        console.error("[v0] Error cleaning up pattern cooldowns:", patternError)
-      }
+      await query(
+        `
+          DELETE FROM generation_patterns
+          WHERE pattern_data->>'type' = 'cooldown'
+            AND (pattern_data->>'cooldown_until')::timestamptz < $1
+        `,
+        [now]
+      )
 
       console.log("[v0] Expired cooldowns cleaned up successfully")
     } catch (error) {

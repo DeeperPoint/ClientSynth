@@ -1,5 +1,5 @@
-import { createClient } from "@/lib/supabase/server"
 import { ImageGenerationService, type ImageGenerationRequest } from "./image-generation/image-service"
+import { query } from "@/lib/postgres/client"
 
 export interface BatchImageGenerationOptions {
   tenantId: string
@@ -129,29 +129,22 @@ export class BatchImageGenerator {
     })
 
     // Get seed and its images from database
-    const supabase = await createClient()
+    const seedResult = await query(
+      `SELECT * FROM seeds WHERE id = $1 AND tenant_id = $2`,
+      [seedId, tenantId]
+    )
 
-    const { data: seed, error: seedError } = await supabase
-      .from("seeds")
-      .select("*")
-      .eq("id", seedId)
-      .eq("tenant_id", tenantId)
-      .single()
-
-    if (seedError || !seed) {
-      throw new Error(`Seed not found or access denied: ${seedError?.message}`)
+    const seed = seedResult.rows[0]
+    if (!seed) {
+      throw new Error(`Seed not found or access denied`)
     }
 
-    const { data: images, error: imagesError } = await supabase
-      .from("seed_images")
-      .select("*")
-      .eq("seed_id", seedId)
-      .order("created_at", { ascending: true })
+    const imagesResult = await query(
+      `SELECT * FROM seed_images WHERE seed_id = $1 ORDER BY created_at ASC`,
+      [seedId]
+    )
 
-    if (imagesError) {
-      throw new Error(`Failed to fetch seed images: ${imagesError.message}`)
-    }
-
+    const images = imagesResult.rows
     if (!images || images.length === 0) {
       console.warn("[BatchImageGenerator] No seed images found")
       return []

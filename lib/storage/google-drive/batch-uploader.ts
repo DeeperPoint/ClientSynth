@@ -1,6 +1,6 @@
 import { GoogleDriveAuthHandler } from "./auth-handler"
 import { GoogleDriveFolderManager } from "./folder-manager"
-import { createServerClient } from "@/lib/supabase/server"
+import { query } from "@/lib/postgres/client"
 
 export interface UploadJob {
   id: string
@@ -34,13 +34,11 @@ export interface UploadResult {
 export class GoogleDriveBatchUploader {
   private authHandler: GoogleDriveAuthHandler
   private folderManager: GoogleDriveFolderManager
-  private supabase
   private activeUploads: Map<string, UploadJob> = new Map()
 
   constructor() {
     this.authHandler = new GoogleDriveAuthHandler()
     this.folderManager = new GoogleDriveFolderManager()
-    this.supabase = createServerClient()
   }
 
   async startBatchUpload(
@@ -257,28 +255,44 @@ export class GoogleDriveBatchUploader {
     console.log("[v0] Storing drive file info:", driveFile.id)
 
     try {
-      const { error } = await this.supabase.from("drive_files").insert({
-        tenant_id: tenantId,
-        drive_file_id: driveFile.id,
-        file_name: driveFile.name,
-        file_type: uploadFile.fileType,
-        mime_type: driveFile.mimeType,
-        file_size: driveFile.size ? Number.parseInt(driveFile.size) : null,
-        drive_url: `https://drive.google.com/file/d/${driveFile.id}/view`,
-        local_path: uploadFile.localPath,
-        metadata: {
-          ...uploadFile.metadata,
-          drive_created_time: driveFile.createdTime,
-          drive_modified_time: driveFile.modifiedTime,
-        },
-        upload_status: "completed",
-      })
+      await query(
+        `
+          INSERT INTO drive_files (
+            tenant_id,
+            drive_file_id,
+            file_name,
+            file_type,
+            mime_type,
+            file_size,
+            drive_url,
+            local_path,
+            metadata,
+            upload_status,
+            created_at,
+            updated_at
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, NOW(), NOW()
+          )
+        `,
+        [
+          tenantId,
+          driveFile.id,
+          driveFile.name,
+          uploadFile.fileType,
+          driveFile.mimeType,
+          driveFile.size ? Number.parseInt(driveFile.size) : null,
+          `https://drive.google.com/file/d/${driveFile.id}/view`,
+          uploadFile.localPath,
+          JSON.stringify({
+            ...uploadFile.metadata,
+            drive_created_time: driveFile.createdTime,
+            drive_modified_time: driveFile.modifiedTime,
+          }),
+          "completed",
+        ]
+      )
 
-      if (error) {
-        console.error("[v0] Error storing drive file info:", error)
-      } else {
-        console.log("[v0] Drive file info stored successfully")
-      }
+      console.log("[v0] Drive file info stored successfully")
     } catch (error) {
       console.error("[v0] Failed to store drive file info:", error)
     }
@@ -288,19 +302,26 @@ export class GoogleDriveBatchUploader {
     console.log("[v0] Creating sync status record:", uploadJobId)
 
     try {
-      const { error } = await this.supabase.from("drive_sync_status").insert({
-        id: uploadJobId,
-        tenant_id: tenantId,
-        job_id: jobId,
-        sync_type: "upload",
-        status: "pending",
-        total_files: totalFiles,
-        started_at: new Date().toISOString(),
-      })
-
-      if (error) {
-        console.error("[v0] Error creating sync status:", error)
-      }
+      await query(
+        `
+          INSERT INTO drive_sync_status (
+            id,
+            tenant_id,
+            job_id,
+            sync_type,
+            status,
+            total_files,
+            processed_files,
+            failed_files,
+            started_at,
+            created_at,
+            updated_at
+          ) VALUES (
+            $1, $2, $3, 'upload', 'pending', $4, 0, 0, NOW(), NOW(), NOW()
+          )
+        `,
+        [uploadJobId, tenantId, jobId || null, totalFiles]
+      )
     } catch (error) {
       console.error("[v0] Failed to create sync status:", error)
     }
@@ -328,11 +349,26 @@ export class GoogleDriveBatchUploader {
         updateData.completed_at = new Date().toISOString()
       }
 
-      const { error } = await this.supabase.from("drive_sync_status").update(updateData).eq("id", uploadJobId)
+      const setClauses: string[] = []
+      const values: any[] = []
+      let index = 1
 
-      if (error) {
-        console.error("[v0] Error updating sync status:", error)
-      }
+      Object.entries(updateData).forEach(([key, value]) => {
+        setClauses.push(`${key} = $${index}`)
+        values.push(value)
+        index++
+      })
+
+      values.push(uploadJobId)
+
+      await query(
+        `
+          UPDATE drive_sync_status
+          SET ${setClauses.join(", ")}
+          WHERE id = $${index}
+        `,
+        values
+      )
     } catch (error) {
       console.error("[v0] Failed to update sync status:", error)
     }
@@ -355,9 +391,18 @@ export class GoogleDriveBatchUploader {
 
     // If not in memory, check database
     try {
-      const { data, error } = await this.supabase.from("drive_sync_status").select("*").eq("id", uploadJobId).single()
+      const result = await query(
+        `
+          SELECT *
+          FROM drive_sync_status
+          WHERE id = $1
+        `,
+        [uploadJobId]
+      )
 
-      if (error || !data) {
+      const data = result.rows[0]
+
+      if (!data) {
         console.log("[v0] Upload job not found in database")
         return null
       }
@@ -399,21 +444,20 @@ export class GoogleDriveBatchUploader {
     console.log("[v0] Getting recent uploads for tenant:", tenantId)
 
     try {
-      const { data, error } = await this.supabase
-        .from("drive_sync_status")
-        .select("*")
-        .eq("tenant_id", tenantId)
-        .eq("sync_type", "upload")
-        .order("created_at", { ascending: false })
-        .limit(limit)
+      const result = await query(
+        `
+          SELECT *
+          FROM drive_sync_status
+          WHERE tenant_id = $1
+            AND sync_type = 'upload'
+          ORDER BY created_at DESC
+          LIMIT $2
+        `,
+        [tenantId, limit]
+      )
 
-      if (error) {
-        console.error("[v0] Error fetching recent uploads:", error)
-        return []
-      }
-
-      console.log("[v0] Found recent uploads:", data?.length || 0)
-      return data || []
+      console.log("[v0] Found recent uploads:", result.rows.length)
+      return result.rows
     } catch (error) {
       console.error("[v0] Failed to get recent uploads:", error)
       return []

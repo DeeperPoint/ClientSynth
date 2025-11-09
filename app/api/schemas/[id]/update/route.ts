@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query } from '@/lib/postgres/client'
-import { createClient } from '@/lib/supabase/server'
+import { getCurrentUser, query } from '@/lib/postgres/client'
 
 export async function PUT(
   request: NextRequest,
@@ -12,11 +11,8 @@ export async function PUT(
 
     console.log(`[UpdateSchema] Updating schema ${schemaId}`)
 
-    // Verify user authentication using Supabase
-    const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
+    // Verify user authentication
+    const user = await getCurrentUser()
 
     console.log(`[UpdateSchema] User:`, user?.id, user?.email)
 
