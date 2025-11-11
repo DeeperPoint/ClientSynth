@@ -12,9 +12,15 @@ export function getPool(): Pool {
       throw new Error('DATABASE_URL environment variable is required')
     }
     
+    const sslMode = process.env.DATABASE_SSL?.toLowerCase()
+    const useSSL =
+      sslMode === 'true' ||
+      sslMode === 'require' ||
+      (!!sslMode && sslMode === '1')
+
     pool = new Pool({
       connectionString,
-      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+      ssl: useSSL ? { rejectUnauthorized: false } : false,
       max: 20,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 2000,
