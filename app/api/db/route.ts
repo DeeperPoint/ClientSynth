@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server"
-import { query } from "@/lib/postgres/client"
+import { getCurrentUser, query } from "@/lib/postgres/client"
 
 type Body = {
 	action: "select" | "insert" | "update" | "delete"
@@ -26,9 +26,7 @@ function isSafeIdentifier(id: string) {
 export async function POST(req: NextRequest) {
 	try {
 		// Authenticate user and get tenant IDs
-		const { createClient } = await import('@/lib/supabase/server')
-		const supabase = await createClient()
-		const { data: { user } } = await supabase.auth.getUser()
+		const user = await getCurrentUser()
 
 		console.log('[API DB] User:', user?.id, user?.email)
 

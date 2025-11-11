@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
 import { S3Uploader } from "@/lib/s3-uploader"
 import { LocalFileStorage } from "@/lib/local-file-storage"
 import { FileParser } from "@/lib/file-parser"
-import { query } from "@/lib/postgres/client"
+import { getCurrentUser, query } from "@/lib/postgres/client"
 import crypto from "crypto"
 
 export async function POST(
@@ -18,11 +17,7 @@ export async function POST(
     }
 
     // Verify user authentication
-    const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
+    const user = await getCurrentUser()
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
@@ -174,11 +169,7 @@ export async function GET(
     }
 
     // Verify user authentication
-    const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
+    const user = await getCurrentUser()
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }

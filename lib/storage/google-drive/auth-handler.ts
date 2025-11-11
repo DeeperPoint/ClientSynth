@@ -1,4 +1,4 @@
-import { createServerClient } from "@/lib/supabase/server"
+import { query } from "@/lib/postgres/client"
 
 export interface GoogleDriveToken {
   id: string
@@ -14,14 +14,11 @@ export interface GoogleDriveToken {
 }
 
 export class GoogleDriveAuthHandler {
-  private supabase
   private clientId: string
   private clientSecret: string
   private redirectUri: string
 
   constructor() {
-    this.supabase = createServerClient()
-
     this.clientId = process.env.GOOGLE_DRIVE_CLIENT_ID!
     this.clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET!
     this.redirectUri = process.env.GOOGLE_DRIVE_REDIRECT_URI!
@@ -80,33 +77,46 @@ export class GoogleDriveAuthHandler {
       // Store tokens in database
       const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
 
-      const { data, error } = await this.supabase
-        .from("google_drive_tokens")
-        .upsert(
-          {
-            user_id: userId,
-            tenant_id: tenantId,
-            access_token: tokenData.access_token,
-            refresh_token: tokenData.refresh_token,
-            token_type: tokenData.token_type || "Bearer",
-            expires_at: expiresAt,
-            scope: tokenData.scope,
-            updated_at: new Date().toISOString(),
-          },
-          {
-            onConflict: "user_id,tenant_id",
-          },
+      const upsertResult = await query(`
+        INSERT INTO google_drive_tokens (
+          user_id,
+          tenant_id,
+          access_token,
+          refresh_token,
+          token_type,
+          expires_at,
+          scope,
+          created_at,
+          updated_at
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, NOW(), NOW()
         )
-        .select()
-        .single()
+        ON CONFLICT (user_id, tenant_id)
+        DO UPDATE SET
+          access_token = EXCLUDED.access_token,
+          refresh_token = COALESCE(EXCLUDED.refresh_token, google_drive_tokens.refresh_token),
+          token_type = EXCLUDED.token_type,
+          expires_at = EXCLUDED.expires_at,
+          scope = EXCLUDED.scope,
+          updated_at = NOW()
+        RETURNING *
+      `, [
+        userId,
+        tenantId,
+        tokenData.access_token,
+        tokenData.refresh_token || null,
+        tokenData.token_type || "Bearer",
+        expiresAt,
+        tokenData.scope
+      ])
 
-      if (error) {
-        console.error("[v0] Error storing tokens:", error)
-        throw error
+      const storedToken = upsertResult.rows[0]
+      if (!storedToken) {
+        throw new Error("Failed to store Google Drive tokens")
       }
 
       console.log("[v0] Tokens stored successfully")
-      return data
+      return storedToken as GoogleDriveToken
     } catch (error) {
       console.error("[v0] Failed to exchange code for tokens:", error)
       throw error
@@ -117,14 +127,19 @@ export class GoogleDriveAuthHandler {
     console.log("[v0] Getting valid access token for tenant:", tenantId)
 
     try {
-      const { data: tokenData, error } = await this.supabase
-        .from("google_drive_tokens")
-        .select("*")
-        .eq("user_id", userId)
-        .eq("tenant_id", tenantId)
-        .single()
+      const tokenResult = await query(
+        `
+          SELECT *
+          FROM google_drive_tokens
+          WHERE user_id = $1
+            AND tenant_id = $2
+        `,
+        [userId, tenantId]
+      )
 
-      if (error || !tokenData) {
+      const tokenData = tokenResult.rows[0] as GoogleDriveToken | undefined
+
+      if (!tokenData) {
         console.log("[v0] No tokens found for user")
         return null
       }
@@ -182,19 +197,16 @@ export class GoogleDriveAuthHandler {
       // Update stored tokens
       const expiresAt = new Date(Date.now() + refreshData.expires_in * 1000).toISOString()
 
-      const { error: updateError } = await this.supabase
-        .from("google_drive_tokens")
-        .update({
-          access_token: refreshData.access_token,
-          expires_at: expiresAt,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", tokenData.id)
-
-      if (updateError) {
-        console.error("[v0] Error updating refreshed tokens:", updateError)
-        return null
-      }
+      await query(
+        `
+          UPDATE google_drive_tokens
+          SET access_token = $1,
+              expires_at = $2,
+              updated_at = NOW()
+          WHERE id = $3
+        `,
+        [refreshData.access_token, expiresAt, tokenData.id]
+      )
 
       console.log("[v0] Refreshed tokens stored successfully")
       return refreshData.access_token
@@ -208,31 +220,34 @@ export class GoogleDriveAuthHandler {
     console.log("[v0] Revoking Google Drive tokens for tenant:", tenantId)
 
     try {
-      const { data: tokenData } = await this.supabase
-        .from("google_drive_tokens")
-        .select("access_token")
-        .eq("user_id", userId)
-        .eq("tenant_id", tenantId)
-        .single()
+      const tokenResult = await query(
+        `
+          SELECT access_token
+          FROM google_drive_tokens
+          WHERE user_id = $1
+            AND tenant_id = $2
+        `,
+        [userId, tenantId]
+      )
 
-      if (tokenData?.access_token) {
+      const tokenRow = tokenResult.rows[0] as { access_token: string } | undefined
+
+      if (tokenRow?.access_token) {
         // Revoke token with Google
-        await fetch(`https://oauth2.googleapis.com/revoke?token=${tokenData.access_token}`, {
+        await fetch(`https://oauth2.googleapis.com/revoke?token=${tokenRow.access_token}`, {
           method: "POST",
         })
       }
 
       // Delete from database
-      const { error } = await this.supabase
-        .from("google_drive_tokens")
-        .delete()
-        .eq("user_id", userId)
-        .eq("tenant_id", tenantId)
-
-      if (error) {
-        console.error("[v0] Error deleting tokens:", error)
-        throw error
-      }
+      await query(
+        `
+          DELETE FROM google_drive_tokens
+          WHERE user_id = $1
+            AND tenant_id = $2
+        `,
+        [userId, tenantId]
+      )
 
       console.log("[v0] Tokens revoked successfully")
     } catch (error) {

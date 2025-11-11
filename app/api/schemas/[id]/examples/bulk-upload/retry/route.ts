@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
-import { query } from "@/lib/postgres/client"
+import { getCurrentUser, query } from "@/lib/postgres/client"
 
 export async function POST(
   request: NextRequest,
@@ -19,11 +18,7 @@ export async function POST(
     }
 
     // Verify user authentication
-    const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
+    const user = await getCurrentUser()
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }

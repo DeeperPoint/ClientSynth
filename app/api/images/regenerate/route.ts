@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { ImageGenerator } from "@/lib/image-generator"
-import { createClient } from "@/lib/supabase/server"
+import { getCurrentUser, query } from "@/lib/postgres/client"
 
 export async function POST(request: NextRequest) {
   try {
@@ -11,23 +11,17 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify user has access to this tenant
-    const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
+    const user = await getCurrentUser()
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { data: tenantAccess } = await supabase
-      .from("user_tenant_roles")
-      .select("tenant_id")
-      .eq("user_id", user.id)
-      .eq("tenant_id", tenantId)
-      .single()
+    const tenantAccess = await query(
+      `SELECT 1 FROM user_tenant_roles WHERE user_id = $1 AND tenant_id = $2`,
+      [user.id, tenantId]
+    )
 
-    if (!tenantAccess) {
+    if (tenantAccess.rows.length === 0) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 })
     }
 
@@ -42,21 +36,33 @@ export async function POST(request: NextRequest) {
     })
 
     // Store new image metadata in media table
-    const { error: mediaError } = await supabase.from("media").insert({
-      tenant_id: tenantId,
-      job_id: jobId,
-      record_id: recordId,
-      s3_key: result.s3Key,
-      s3_bucket: process.env.AWS_S3_BUCKET || "client-synth-media",
-      md5_hash: result.md5Hash,
-      width: 512,
-      height: 512,
-      file_size: result.fileSize,
-      model_name: model,
-      prompt: prompt,
-    })
-
-    if (mediaError) {
+    try {
+      await query(
+        `
+          INSERT INTO media (
+            tenant_id, job_id, record_id, field_name, s3_key, s3_url,
+            content_type, file_size, md5_hash, model_used, prompt_used, generation_metadata
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        `,
+        [
+          tenantId,
+          jobId,
+          recordId,
+          fieldName,
+          result.s3Key,
+          result.url,
+          "image/png",
+          result.fileSize || 0,
+          result.md5Hash || "",
+          model,
+          prompt,
+          JSON.stringify({
+            regeneratedAt: new Date().toISOString(),
+            regenerateRequestedBy: user.id,
+          }),
+        ]
+      )
+    } catch (mediaError) {
       console.error("Failed to store media metadata:", mediaError)
     }
 

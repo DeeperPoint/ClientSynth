@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server"
+import { query } from "@/lib/postgres/client"
 
 export interface Tenant {
   id: string
@@ -7,71 +7,71 @@ export interface Tenant {
   role: string
 }
 
-export interface TenantWithRole extends Tenant {
-  user_tenant_roles: {
-    role: string
-  }[]
-}
-
 export async function getUserTenants(userId: string): Promise<Tenant[]> {
-  const supabase = await createClient()
+  try {
+    const result = await query<{
+      id: string
+      name: string
+      slug: string
+      role: string
+    }>(
+      `
+        SELECT t.id, t.name, t.slug, utr.role
+        FROM tenants t
+        INNER JOIN user_tenant_roles utr ON t.id = utr.tenant_id
+        WHERE utr.user_id = $1
+        ORDER BY t.name
+      `,
+      [userId]
+    )
 
-  const { data, error } = await supabase
-    .from("tenants")
-    .select(`
-      id,
-      name,
-      slug,
-      user_tenant_roles!inner(role)
-    `)
-    .eq("user_tenant_roles.user_id", userId)
-    .order("name")
-
-  if (error) {
+    return result.rows.map((tenant) => ({
+      id: tenant.id,
+      name: tenant.name,
+      slug: tenant.slug,
+      role: tenant.role || "member",
+    }))
+  } catch (error) {
     console.error("Error fetching user tenants:", error)
     return []
   }
-
-  return (data as TenantWithRole[]).map((tenant) => ({
-    id: tenant.id,
-    name: tenant.name,
-    slug: tenant.slug,
-    role: tenant.user_tenant_roles[0]?.role || "member",
-  }))
 }
 
 export async function createTenantForUser(userId: string, tenantName: string): Promise<string | null> {
-  const supabase = await createClient()
-
   // Create slug from name
   const slug = tenantName
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
 
-  // Create tenant
-  const { data: tenant, error: tenantError } = await supabase
-    .from("tenants")
-    .insert({ name: tenantName, slug })
-    .select("id")
-    .single()
+  try {
+    const tenantResult = await query<{ id: string }>(
+      `
+        INSERT INTO tenants (name, slug)
+        VALUES ($1, $2)
+        RETURNING id
+      `,
+      [tenantName, slug]
+    )
 
-  if (tenantError) {
-    console.error("Error creating tenant:", tenantError)
+    const tenantId = tenantResult.rows[0]?.id
+    if (!tenantId) {
+      throw new Error("Failed to create tenant")
+    }
+
+    await query(
+      `
+        INSERT INTO user_tenant_roles (user_id, tenant_id, role)
+        VALUES ($1, $2, $3)
+      `,
+      [userId, tenantId, "owner"]
+    )
+
+    return tenantId
+  } catch (error) {
+    console.error("Error creating tenant:", error)
     return null
   }
-
-  // Add user as owner
-  const { error: roleError } = await supabase
-    .from("user_tenant_roles")
-    .insert({ user_id: userId, tenant_id: tenant.id, role: "owner" })
-
-  if (roleError) {
-    console.error("Error adding user role:", roleError)
-    return null
-  }
-
-  return tenant.id
 }
 
 export async function ensureUserHasTenant(userId: string, userEmail: string): Promise<string | null> {
@@ -82,16 +82,22 @@ export async function ensureUserHasTenant(userId: string, userEmail: string): Pr
   }
 
   // Create default tenant
-  const supabase = await createClient()
-  const { data, error } = await supabase.rpc("create_default_tenant_for_user", {
-    user_id: userId,
-    user_email: userEmail,
-  })
+  try {
+    const result = await query<{ tenant_id: string | null }>(
+      `SELECT create_default_tenant_for_user($1, $2) AS tenant_id`,
+      [userId, userEmail]
+    )
 
-  if (error) {
-    console.error("Error creating default tenant:", error)
+    const tenantId = result.rows[0]?.tenant_id
+    if (tenantId) {
+      return tenantId
+    }
+
+    // Fallback: create a tenant based on email if the function is unavailable
+    const fallbackName = userEmail ? `${userEmail.split("@")[0]}'s Workspace` : "My Workspace"
+    return await createTenantForUser(userId, fallbackName)
+  } catch (error) {
+    console.error("Error ensuring user tenant:", error)
     return null
   }
-
-  return data
 }

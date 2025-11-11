@@ -1,5 +1,5 @@
 import { GoogleDriveAuthHandler } from "./auth-handler"
-import { createServerClient } from "@/lib/supabase/server"
+import { query } from "@/lib/postgres/client"
 
 export interface DriveFolder {
   id: string
@@ -15,11 +15,9 @@ export interface DriveFolder {
 
 export class GoogleDriveFolderManager {
   private authHandler: GoogleDriveAuthHandler
-  private supabase
 
   constructor() {
     this.authHandler = new GoogleDriveAuthHandler()
-    this.supabase = createServerClient()
   }
 
   async createProjectStructure(
@@ -123,29 +121,37 @@ export class GoogleDriveFolderManager {
 
     // Store folder info in database if tenantId provided
     if (tenantId) {
-      const { data, error } = await this.supabase
-        .from("drive_folders")
-        .insert({
-          tenant_id: tenantId,
-          drive_folder_id: driveFolder.id,
-          folder_name: folderName,
-          parent_folder_id: parentFolderId,
-          folder_type: folderType,
-          metadata: {
-            drive_name: driveFolder.name,
-            created_time: driveFolder.createdTime,
-          },
-        })
-        .select()
-        .single()
+      const metadata = {
+        drive_name: driveFolder.name,
+        created_time: driveFolder.createdTime,
+      }
 
-      if (error) {
-        console.error("[v0] Error storing folder info:", error)
-        throw error
+      const insertResult = await query(
+        `
+          INSERT INTO drive_folders (
+            tenant_id,
+            drive_folder_id,
+            folder_name,
+            parent_folder_id,
+            folder_type,
+            metadata,
+            created_at,
+            updated_at
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6::jsonb, NOW(), NOW()
+          )
+          RETURNING *
+        `,
+        [tenantId, driveFolder.id, folderName, parentFolderId || null, folderType, JSON.stringify(metadata)]
+      )
+
+      const storedFolder = insertResult.rows[0]
+      if (!storedFolder) {
+        throw new Error("Failed to store Drive folder information")
       }
 
       console.log("[v0] Folder info stored in database")
-      return data
+      return storedFolder as DriveFolder
     }
 
     // Return minimal folder info if no database storage
@@ -165,20 +171,19 @@ export class GoogleDriveFolderManager {
   async getFoldersByType(tenantId: string, folderType: DriveFolder["folder_type"]): Promise<DriveFolder[]> {
     console.log("[v0] Getting folders by type:", folderType, "for tenant:", tenantId)
 
-    const { data, error } = await this.supabase
-      .from("drive_folders")
-      .select("*")
-      .eq("tenant_id", tenantId)
-      .eq("folder_type", folderType)
-      .order("created_at", { ascending: false })
+    const result = await query(
+      `
+        SELECT *
+        FROM drive_folders
+        WHERE tenant_id = $1
+          AND folder_type = $2
+        ORDER BY created_at DESC
+      `,
+      [tenantId, folderType]
+    )
 
-    if (error) {
-      console.error("[v0] Error fetching folders:", error)
-      throw error
-    }
-
-    console.log("[v0] Found folders:", data?.length || 0)
-    return data || []
+    console.log("[v0] Found folders:", result.rows.length)
+    return result.rows as DriveFolder[]
   }
 
   async getProjectFolders(tenantId: string): Promise<{
@@ -189,19 +194,17 @@ export class GoogleDriveFolderManager {
   }> {
     console.log("[v0] Getting all project folders for tenant:", tenantId)
 
-    const { data, error } = await this.supabase
-      .from("drive_folders")
-      .select("*")
-      .eq("tenant_id", tenantId)
-      .order("folder_type")
-      .order("created_at", { ascending: false })
+    const result = await query(
+      `
+        SELECT *
+        FROM drive_folders
+        WHERE tenant_id = $1
+        ORDER BY folder_type, created_at DESC
+      `,
+      [tenantId]
+    )
 
-    if (error) {
-      console.error("[v0] Error fetching project folders:", error)
-      throw error
-    }
-
-    const folders = data || []
+    const folders = result.rows as DriveFolder[]
     const grouped = {
       projects: folders.filter((f) => f.folder_type === "project"),
       images: folders.filter((f) => f.folder_type === "images"),
@@ -228,15 +231,19 @@ export class GoogleDriveFolderManager {
 
     try {
       // Get folder info from database
-      const { data: folderData, error: fetchError } = await this.supabase
-        .from("drive_folders")
-        .select("drive_folder_id")
-        .eq("id", folderId)
-        .eq("tenant_id", tenantId)
-        .single()
+      const folderResult = await query(
+        `
+          SELECT drive_folder_id
+          FROM drive_folders
+          WHERE id = $1
+            AND tenant_id = $2
+        `,
+        [folderId, tenantId]
+      )
 
-      if (fetchError || !folderData) {
-        console.error("[v0] Folder not found in database:", fetchError)
+      const folderData = folderResult.rows[0] as { drive_folder_id: string } | undefined
+      if (!folderData) {
+        console.error("[v0] Folder not found in database")
         throw new Error("Folder not found")
       }
 
@@ -255,16 +262,14 @@ export class GoogleDriveFolderManager {
       }
 
       // Delete from database
-      const { error: deleteError } = await this.supabase
-        .from("drive_folders")
-        .delete()
-        .eq("id", folderId)
-        .eq("tenant_id", tenantId)
-
-      if (deleteError) {
-        console.error("[v0] Error deleting folder from database:", deleteError)
-        throw deleteError
-      }
+      await query(
+        `
+          DELETE FROM drive_folders
+          WHERE id = $1
+            AND tenant_id = $2
+        `,
+        [folderId, tenantId]
+      )
 
       console.log("[v0] Folder deleted successfully")
     } catch (error) {

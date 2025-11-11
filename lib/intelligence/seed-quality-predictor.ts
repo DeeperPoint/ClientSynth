@@ -1,5 +1,5 @@
-import { createServerClient } from "@/lib/supabase/server"
 import { SeedDatabase, type Seed } from "../seeding/seed-database"
+import { query } from "@/lib/postgres/client"
 
 export interface QualityPrediction {
   seedId: string
@@ -23,11 +23,9 @@ export interface QualityFeedback {
 }
 
 export class SeedQualityPredictor {
-  private supabase
   private seedDb: SeedDatabase
 
   constructor() {
-    this.supabase = createServerClient()
     this.seedDb = new SeedDatabase()
   }
 
@@ -36,14 +34,14 @@ export class SeedQualityPredictor {
 
     try {
       // Get seed information
-      const { data: seedData, error: seedError } = await this.supabase
-        .from("seeds")
-        .select("*")
-        .eq("id", seedId)
-        .single()
+      const seedResult = await query<Seed>(
+        `SELECT * FROM seeds WHERE id = $1`,
+        [seedId]
+      )
+      const seedData = seedResult.rows[0]
 
-      if (seedError || !seedData) {
-        console.error("[v0] Seed not found:", seedError)
+      if (!seedData) {
+        console.error("[v0] Seed not found")
         throw new Error("Seed not found")
       }
 
@@ -106,20 +104,23 @@ export class SeedQualityPredictor {
     console.log("[v0] Recording quality feedback for seed:", feedback.seedId)
 
     try {
-      const { error } = await this.supabase.from("seed_quality_feedback").insert({
-        seed_id: feedback.seedId,
-        job_id: feedback.jobId,
-        tenant_id: tenantId,
-        quality_rating: feedback.rating,
-        feedback_type: feedback.feedbackType,
-        feedback_data: feedback.feedbackData,
-        created_by: userId,
-      })
-
-      if (error) {
-        console.error("[v0] Error recording quality feedback:", error)
-        throw error
-      }
+      await query(
+        `
+          INSERT INTO seed_quality_feedback (
+            seed_id, job_id, tenant_id, quality_rating,
+            feedback_type, feedback_data, created_by
+          ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+        `,
+        [
+          feedback.seedId,
+          feedback.jobId,
+          tenantId,
+          feedback.rating,
+          feedback.feedbackType,
+          JSON.stringify(feedback.feedbackData),
+          userId ?? null,
+        ]
+      )
 
       // Update seed quality score based on feedback
       await this.updateSeedQualityScore(feedback.seedId)
@@ -134,19 +135,23 @@ export class SeedQualityPredictor {
   private async getHistoricalFeedback(seedId: string): Promise<any[]> {
     console.log("[v0] Getting historical feedback for seed:", seedId)
 
-    const { data, error } = await this.supabase
-      .from("seed_quality_feedback")
-      .select("*")
-      .eq("seed_id", seedId)
-      .order("created_at", { ascending: false })
+    try {
+      const result = await query(
+        `
+          SELECT *
+          FROM seed_quality_feedback
+          WHERE seed_id = $1
+          ORDER BY created_at DESC
+        `,
+        [seedId]
+      )
 
-    if (error) {
+      console.log("[v0] Found historical feedback entries:", result.rows.length)
+      return result.rows
+    } catch (error) {
       console.error("[v0] Error fetching historical feedback:", error)
       return []
     }
-
-    console.log("[v0] Found historical feedback entries:", data?.length || 0)
-    return data || []
   }
 
   private async getUsageStatistics(seedId: string): Promise<{
@@ -157,16 +162,19 @@ export class SeedQualityPredictor {
     console.log("[v0] Getting usage statistics for seed:", seedId)
 
     try {
-      const { data, error } = await this.supabase.from("seed_usage").select("*").eq("seed_id", seedId)
+      const result = await query(
+        `
+          SELECT used_at
+          FROM seed_usage
+          WHERE seed_id = $1
+        `,
+        [seedId]
+      )
 
-      if (error) {
-        console.error("[v0] Error fetching usage statistics:", error)
-        return { totalUsage: 0, recentUsage: 0, successRate: 0 }
-      }
-
-      const totalUsage = data?.length || 0
+      const rows = result.rows as Array<{ used_at: string }>
+      const totalUsage = rows.length
       const recentUsage =
-        data?.filter((usage) => {
+        rows.filter((usage) => {
           const usedAt = new Date(usage.used_at)
           const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
           return usedAt >= weekAgo
