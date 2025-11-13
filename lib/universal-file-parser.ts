@@ -420,7 +420,7 @@ export class UniversalFileParser {
   /**
    * Extract structured fields from raw text using intelligent parsing
    */
-  private extractFieldsFromText(text: string, file: File, fileType: string): ParsedFileData {
+  extractFieldsFromText(text: string, file: File | { name: string; size: number }, fileType: string): ParsedFileData {
     const fields: ExtractedField[] = []
     
     // Patterns to detect different field types

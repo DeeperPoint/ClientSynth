@@ -147,8 +147,91 @@ export async function POST(
           throw new Error(validation.error || 'File failed security validation')
         }
 
-        // Parse file
-        const parseResult = await parser.parseFile(file)
+        // Parse file - handle server-side parsing directly
+        // For PDF and DOCX files, parse directly using Python script instead of going through API
+        let parseResult
+        if (fileExtension === 'pdf' || fileExtension === 'docx' || fileExtension === 'doc') {
+          // Parse PDF directly on server
+          const { spawn } = await import('child_process')
+          const path = await import('path')
+          const { writeFile, unlink } = await import('fs/promises')
+          const os = await import('os')
+          const { randomUUID } = await import('crypto')
+          
+          const tempDir = os.tmpdir()
+          const fileExt = fileExtension === 'doc' ? 'docx' : fileExtension
+          const tempFilePath = path.join(tempDir, `${randomUUID()}.${fileExt}`)
+          await writeFile(tempFilePath, buffer)
+          
+          try {
+            const text = await new Promise<string>((resolve, reject) => {
+              const python = spawn('python3', [
+                path.join(process.cwd(), 'lib', fileExtension === 'pdf' ? 'pdf_parser.py' : 'docx_parser.py'),
+                tempFilePath
+              ])
+              
+              let output = ''
+              let errorOutput = ''
+              
+              python.stdout.on('data', (data) => {
+                output += data.toString()
+              })
+              
+              python.stderr.on('data', (data) => {
+                errorOutput += data.toString()
+              })
+              
+              python.on('close', (code) => {
+                if (code === 0) {
+                  resolve(output)
+                } else {
+                  reject(new Error(`${fileExtension.toUpperCase()} parsing failed: ${errorOutput || 'unknown error'}`))
+                }
+              })
+              
+              python.on('error', (error) => {
+                reject(new Error(`Failed to start Python: ${error.message}`))
+              })
+            })
+            
+            // Extract fields from text (pass file metadata instead of File object)
+            parseResult = parser.extractFieldsFromText(text, { name: file.name, size: file.size }, fileExtension)
+          } finally {
+            await unlink(tempFilePath).catch(() => {})
+          }
+        } else {
+          // For other file types, use the parser normally
+          // Create a File-like object that works in Node.js
+          const FilePolyfill = class {
+            name: string
+            type: string
+            size: number
+            private buffer: Buffer
+            
+            constructor(buffer: Buffer, name: string, options: { type?: string }) {
+              this.buffer = buffer
+              this.name = name
+              this.type = options.type || 'application/octet-stream'
+              this.size = buffer.length
+            }
+            
+            async arrayBuffer(): Promise<ArrayBuffer> {
+              return this.buffer.buffer.slice(this.buffer.byteOffset, this.buffer.byteOffset + this.buffer.byteLength)
+            }
+            
+            stream(): ReadableStream {
+              return new ReadableStream({
+                start(controller) {
+                  controller.enqueue(new Uint8Array(this.buffer))
+                  controller.close()
+                }
+              })
+            }
+          } as any
+          
+          const fileToParse = new FilePolyfill(buffer, file.name, { type: file.type || 'application/octet-stream' })
+          parseResult = await parser.parseFile(fileToParse as File)
+        }
         if (!parseResult.success) {
           throw new Error(parseResult.error || 'Failed to parse file')
         }
