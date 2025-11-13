@@ -175,6 +175,32 @@ export class AIGenerator {
       // Remove any remaining JSON artifacts
       value = this.cleanValue(value)
       
+      // Additional validation for instruction patterns
+      const instructionPatterns = [
+        /for field:\s*\w+/i,
+        /cannot be generated/i,
+        /cannot be an empty string/i,
+        /please try again/i,
+        /value cannot be/i,
+        /error/i,
+        /failed/i,
+      ]
+      
+      const hasInstructions = instructionPatterns.some(pattern => pattern.test(value))
+      if (hasInstructions && retryAttempt < 3) {
+        console.warn(`[AIGenerator] Detected instruction patterns in value, retrying: ${value}`)
+        return await this.generateFieldValue(context, retryAttempt + 1)
+      }
+      
+      // Check for trailing numbers/timestamps that shouldn't be there
+      const hasTrailingNumbers = /_\d+(_\d+)?$/.test(value)
+      if (hasTrailingNumbers) {
+        // Clean it and log a warning
+        const originalValue = value
+        value = value.replace(/_\d+(_\d+)?$/g, '').trim()
+        console.warn(`[AIGenerator] Removed trailing numbers from value: "${originalValue}" -> "${value}"`)
+      }
+      
       // Validate value is not empty
       if (!value || value.trim().length === 0) {
         console.warn(`[AIGenerator] Generated empty value, retry attempt: ${retryAttempt}`)
@@ -229,11 +255,31 @@ export class AIGenerator {
       .replace(/\\\\/g, '\\') // Unescape backslashes
       .trim()
     
+    // Remove error messages and instruction patterns
+    cleaned = cleaned.replace(/for field:\s*[^,]+/gi, '') // Remove "for field: job_title"
+    cleaned = cleaned.replace(/cannot be generated based on[^.]*/gi, '') // Remove constraint errors
+    cleaned = cleaned.replace(/cannot be an empty string[^.]*/gi, '') // Remove empty string errors
+    cleaned = cleaned.replace(/value cannot be[^.]*/gi, '') // Remove "value cannot be" errors
+    cleaned = cleaned.replace(/please try again[^.]*/gi, '') // Remove "please try again"
+    cleaned = cleaned.replace(/,\s*value\s*cannot/gi, '') // Remove trailing error messages
+    cleaned = cleaned.replace(/,\s*cannot\s*be/gi, '') // Remove trailing "cannot be"
+    
+    // Remove any text after comma that looks like an error message
+    cleaned = cleaned.replace(/,\s*(cannot|error|failed|invalid|unable)[^.]*/gi, '')
+    
+    // Remove trailing numbers and timestamps added by fallback generation (e.g., "Australia_11_1763030500331")
+    cleaned = cleaned.replace(/_\d+_\d+$/g, '') // Remove _number_timestamp pattern
+    cleaned = cleaned.replace(/_\d{13}$/g, '') // Remove _timestamp (13 digits)
+    cleaned = cleaned.replace(/_\d+$/g, '') // Remove trailing _number (but be careful - might remove valid suffixes)
+    
     // Remove any remaining error messages or JSON markers
     cleaned = cleaned.replace(/^error[\s:]*/i, '')
     cleaned = cleaned.replace(/^json[\s:]*/i, '')
     cleaned = cleaned.replace(/\{[^}]*\}/g, '') // Remove any remaining JSON objects
     cleaned = cleaned.replace(/\[[^\]]*\]/g, '') // Remove any remaining JSON arrays
+    
+    // Remove trailing commas and clean up
+    cleaned = cleaned.replace(/,\s*$/, '').trim()
     
     return cleaned.trim()
   }
@@ -304,10 +350,12 @@ IMPORTANT:
 
   private buildPrompt(context: GenerationContext, exampleData?: string[], retryAttempt: number = 0): string {
     const { fieldName, fieldDescription, existingData, recordIndex, previouslyGeneratedValues } = context
-    const parts: string[] = [`Generate a unique, realistic value for field: ${fieldName}`]
+    
+    // CHANGED: Don't include "for field: {fieldName}" in the prompt to avoid leakage
+    const parts: string[] = [`Generate a unique, realistic value.`]
 
     if (fieldDescription) {
-      parts.push(`Field description: ${fieldDescription}`)
+      parts.push(`Context: ${fieldDescription}`)
     }
 
     // Add variation instruction based on record index to prevent duplicates
@@ -345,13 +393,15 @@ IMPORTANT:
 
     // Add strict realistic data requirements
     parts.push(`STRICT Requirements:`)
-    parts.push(`- Generate a realistic, professional value appropriate for this field type`)
+    parts.push(`- Generate ONLY a realistic, professional value appropriate for this field type`)
     parts.push(`- The value MUST be unique and completely different from ALL previously generated values listed above`)
     parts.push(`- If similar values were generated before, use different names, numbers, or phrasing`)
     parts.push(`- The value must be complete and non-empty`)
-    parts.push(`- Do NOT include any JSON structure, error messages, or metadata in the value`)
+    parts.push(`- CRITICAL: Return ONLY the value itself - NO field names, NO explanations, NO error messages, NO instructions, NO metadata`)
     parts.push(`- Return ONLY a JSON object with a "value" field containing the clean value`)
     parts.push(`- NEVER reuse any value from the "avoid" list - be creative and generate something new`)
+    parts.push(`- NEVER include phrases like "for field:", "cannot be", "error", or any explanatory text in the value`)
+    parts.push(`- NEVER include trailing numbers, timestamps, or suffixes in the value`)
 
     return parts.join("\n")
   }

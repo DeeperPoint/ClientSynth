@@ -783,20 +783,36 @@ export class JobProcessor {
                 throw new Error(`AI generated empty value for required field ${field.name}`)
               }
               
-              // Check for duplicate - but allow some duplicates for realistic data (names can repeat)
+              // Check for duplicate - but allow some duplicates for realistic data (names, cities, countries can repeat)
               const normalizedValue = String(fieldValue).toLowerCase().trim()
               if (existingValues.has(normalizedValue)) {
-                // For name fields, allow duplicates if we've generated many records (realistic data)
-                const isNameField = field.type === 'name' || field.name.toLowerCase().includes('name')
+                // For common fields that can realistically repeat, allow duplicates after many records
+                const isCommonField = 
+                  field.type === 'name' || 
+                  field.name.toLowerCase().includes('name') ||
+                  field.type === 'city' ||
+                  field.name.toLowerCase().includes('city') ||
+                  field.type === 'country' ||
+                  field.name.toLowerCase().includes('country') ||
+                  field.type === 'industry' ||
+                  field.name.toLowerCase().includes('industry')
+                
                 const totalGenerated = existingValues.size
                 
-                if (isNameField && totalGenerated > 20 && attempts < maxRetries) {
-                  // Allow duplicate names if we have many records (realistic - people can have same names)
-                  console.log(`[v0] Allowing duplicate name "${fieldValue}" (realistic data, ${totalGenerated} records generated)`)
+                if (isCommonField && totalGenerated > 20 && attempts < maxRetries) {
+                  // Allow duplicate common values if we have many records (realistic - people can share cities, countries, etc.)
+                  console.log(`[v0] Allowing duplicate ${field.type} "${fieldValue}" (realistic data, ${totalGenerated} records generated)`)
                 } else {
                   console.warn(`[v0] AI generated duplicate value for ${field.name}: ${fieldValue}`)
                   throw new Error(`Generated duplicate value for field ${field.name}`)
                 }
+              }
+              
+              // Final cleanup: remove any trailing numbers or timestamps that might have leaked through
+              const originalValue = String(fieldValue)
+              fieldValue = String(fieldValue).replace(/_\d+(_\d+)?$/g, '').trim()
+              if (originalValue !== fieldValue) {
+                console.warn(`[v0] Cleaned trailing numbers from AI-generated value: "${originalValue}" -> "${fieldValue}"`)
               }
               
               console.log(`[v0] AI generated for ${field.name}:`, fieldValue)
@@ -804,12 +820,21 @@ export class JobProcessor {
               console.log(`[v0] Using fallback generation for field: ${field.name}`)
               fieldValue = await this.generateFieldValue(field, recordIndex, existingValues)
               
+              // Clean any trailing numbers that might have been added
+              fieldValue = String(fieldValue).replace(/_\d+(_\d+)?$/g, '').trim()
+              
               // Check for duplicate in fallback generation
               const normalizedFallbackValue = String(fieldValue).toLowerCase().trim()
               if (existingValues.has(normalizedFallbackValue)) {
-                console.warn(`[v0] Fallback generated duplicate value, adding variation...`)
-                // Add variation to make it unique
-                fieldValue = `${fieldValue}_${recordIndex}_${Date.now()}`
+                console.warn(`[v0] Fallback generated duplicate value, retrying with different approach...`)
+                // Instead of adding numbers, try generating again with a different seed
+                // This is better than adding ugly suffixes
+                if (attempts < maxRetries - 1) {
+                  throw new Error(`Fallback generated duplicate value for field ${field.name}`)
+                }
+                // Last attempt: use a more unique variation without numbers
+                const uniqueSuffix = Math.random().toString(36).substring(2, 6) // Short random string
+                fieldValue = `${fieldValue} ${uniqueSuffix}`
                 const newNormalized = String(fieldValue).toLowerCase().trim()
                 if (existingValues.has(newNormalized)) {
                   throw new Error(`Fallback generated duplicate value for field ${field.name} even with variation`)
@@ -836,6 +861,26 @@ export class JobProcessor {
         }
       }
 
+      // Final cleanup: remove any trailing numbers, timestamps, or instruction patterns
+      let finalValue = String(fieldValue)
+      const originalFinal = finalValue
+      
+      // Remove trailing numbers/timestamps (e.g., "Australia_11_1763030500331")
+      finalValue = finalValue.replace(/_\d+(_\d+)?$/g, '').trim()
+      
+      // Remove instruction patterns that might have leaked through
+      finalValue = finalValue.replace(/for field:\s*[^,]+/gi, '').trim()
+      finalValue = finalValue.replace(/cannot be generated[^.]*/gi, '').trim()
+      finalValue = finalValue.replace(/cannot be an empty string[^.]*/gi, '').trim()
+      finalValue = finalValue.replace(/value cannot be[^.]*/gi, '').trim()
+      finalValue = finalValue.replace(/please try again[^.]*/gi, '').trim()
+      finalValue = finalValue.replace(/,\s*(cannot|error|failed|invalid|unable)[^.]*/gi, '').trim()
+      
+      if (originalFinal !== finalValue) {
+        console.warn(`[v0] Final cleanup for ${field.name}: "${originalFinal}" -> "${finalValue}"`)
+        fieldValue = finalValue
+      }
+      
       // Validate field value is not a JSON error message
       const valueStr = String(fieldValue)
       if (valueStr.toLowerCase().includes('error') && 
@@ -849,7 +894,14 @@ export class JobProcessor {
         throw new Error(`Field ${field.name} contains error message: ${valueStr}`)
       }
 
+      // Store cleaned value
       record[field.name] = fieldValue
+      
+      // Track the value for duplicate prevention (using cleaned value)
+      if (fieldValue) {
+        const normalizedValue = String(fieldValue).toLowerCase().trim()
+        this.generatedValuesPerField.get(jobKey)?.get(field.name)?.add(normalizedValue)
+      }
     }
 
     if (job.config.enable_images !== false && imageFields.length > 0) {
@@ -1089,7 +1141,8 @@ export class JobProcessor {
       case "boolean":
         return Math.random() > 0.5
       default:
-        return `Sample ${name} ${recordIndex + 1}_${Date.now()}`
+        // Generate a clean sample value without trailing numbers
+        return `Sample ${name} ${recordIndex + 1}`
     }
   }
 

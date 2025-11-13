@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { S3Uploader } from "@/lib/s3-uploader"
 import { LocalFileStorage } from "@/lib/local-file-storage"
 import { FileParser } from "@/lib/file-parser"
+import { UniversalFileParser } from "@/lib/universal-file-parser"
 import { getCurrentUser, query } from "@/lib/postgres/client"
 import crypto from "crypto"
 
@@ -31,13 +32,6 @@ export async function POST(
       return NextResponse.json({ error: "No file provided" }, { status: 400 })
     }
 
-    // Validate file
-    const fileParser = new FileParser()
-    const validation = fileParser.validateFile(file)
-    if (!validation.valid) {
-      return NextResponse.json({ error: validation.error }, { status: 400 })
-    }
-
     // Get schema and verify access
     const schemaResult = await query(`
       SELECT s.*, t.id as tenant_id
@@ -54,17 +48,89 @@ export async function POST(
     const schema = schemaResult.rows[0]
     const tenantId = schema.tenant_id
 
-    // Parse the file
-    const parseResult = await fileParser.parseFile(file)
-    if (!parseResult.success) {
-      return NextResponse.json({ error: parseResult.error }, { status: 400 })
+    // Determine file type and use appropriate parser
+    const fileExtension = file.name.split('.').pop()?.toLowerCase() || ''
+    const isSimpleFile = ['csv', 'json', 'xlsx', 'xls'].includes(fileExtension)
+    
+    let parseResult: any
+    
+    if (isSimpleFile) {
+      // Use FileParser for simple file types (CSV, JSON, Excel)
+      const fileParser = new FileParser()
+      const validation = fileParser.validateFile(file)
+      if (!validation.valid) {
+        return NextResponse.json({ error: validation.error }, { status: 400 })
+      }
+      
+      const result = await fileParser.parseFile(file)
+      if (!result.success) {
+        return NextResponse.json({ error: result.error }, { status: 400 })
+      }
+      
+      // Convert FileParser result to UniversalFileParser format
+      parseResult = {
+        success: true,
+        fields: result.fieldNames.map((fieldName: string) => ({
+          fieldName,
+          fieldType: 'text',
+          exampleValues: result.data
+            .filter((item: any) => item.fieldName === fieldName)
+            .map((item: any) => item.exampleValue)
+            .slice(0, 10),
+          confidence: 0.8,
+          suggestedType: 'text' as const
+        })),
+        metadata: {
+          fileType: fileExtension,
+          fileSize: file.size,
+          recordCount: result.totalRows,
+          confidence: 0.8
+        }
+      }
+    } else {
+      // Use UniversalFileParser for complex file types (PDF, DOCX, etc.)
+      const universalParser = new UniversalFileParser()
+      
+      // Handle File object properly in server context
+      let fileToParse: File = file
+      if (!(file instanceof File)) {
+        // Create a File-like object if needed
+        const fileBuffer = await file.arrayBuffer()
+        const FilePolyfill = class {
+          name: string
+          type: string
+          size: number
+          private buffer: Buffer
+          
+          constructor(buffer: Buffer, name: string, options: { type?: string }) {
+            this.buffer = buffer
+            this.name = name
+            this.type = options.type || 'application/octet-stream'
+            this.size = buffer.length
+          }
+          
+          async arrayBuffer(): Promise<ArrayBuffer> {
+            return this.buffer.buffer.slice(this.buffer.byteOffset, this.buffer.byteOffset + this.buffer.byteLength)
+          }
+          
+          async text(): Promise<string> {
+            return this.buffer.toString('utf-8')
+          }
+        } as any
+        
+        fileToParse = new FilePolyfill(Buffer.from(fileBuffer), file.name, { type: file.type || 'application/octet-stream' }) as File
+      }
+      
+      parseResult = await universalParser.parseFile(fileToParse)
+      if (!parseResult.success) {
+        return NextResponse.json({ error: parseResult.error || 'Failed to parse file' }, { status: 400 })
+      }
     }
 
     // Generate file metadata
     const fileBuffer = await file.arrayBuffer()
     const md5Hash = crypto.createHash("md5").update(Buffer.from(fileBuffer)).digest("hex")
-    const fileExtension = file.name.split('.').pop()?.toLowerCase() || 'unknown'
-    const allowedTypes = new Set(['csv','json','xlsx','xls'])
+    const allowedTypes = new Set(['csv','json','xlsx','xls', 'pdf', 'docx', 'doc', 'txt', 'xml'])
     const fileType = allowedTypes.has(fileExtension) ? fileExtension : 'json'
 
     // Try S3 upload first, fallback to local storage
@@ -111,13 +177,45 @@ export async function POST(
 
     const exampleFileId = fileResult.rows[0].id
 
-    // Store parsed example data
-    const exampleData = parseResult.data.map(item => ({
-      example_file_id: exampleFileId,
-      field_name: fieldMappings[item.fieldName] || item.fieldName,
-      example_value: item.exampleValue,
-      row_index: item.rowIndex
-    }))
+    // Store parsed example data - handle both FileParser and UniversalFileParser formats
+    const exampleData: Array<{ example_file_id: string; field_name: string; example_value: string; row_index: number }> = []
+    
+    if (isSimpleFile && parseResult.fields) {
+      // UniversalFileParser format (converted from FileParser)
+      parseResult.fields.forEach((field: any) => {
+        field.exampleValues.forEach((value: string, index: number) => {
+          exampleData.push({
+            example_file_id: exampleFileId,
+            field_name: fieldMappings[field.fieldName] || field.fieldName,
+            example_value: value,
+            row_index: index
+          })
+        })
+      })
+    } else if (parseResult.fields) {
+      // UniversalFileParser format
+      parseResult.fields.forEach((field: any) => {
+        field.exampleValues.forEach((value: string, index: number) => {
+          exampleData.push({
+            example_file_id: exampleFileId,
+            field_name: fieldMappings[field.fieldName] || field.fieldName,
+            example_value: value,
+            row_index: index
+          })
+        })
+      })
+    } else if ((parseResult as any).data) {
+      // FileParser format (legacy)
+      const data = (parseResult as any).data
+      data.forEach((item: any) => {
+        exampleData.push({
+          example_file_id: exampleFileId,
+          field_name: fieldMappings[item.fieldName] || item.fieldName,
+          example_value: item.exampleValue,
+          row_index: item.rowIndex
+        })
+      })
+    }
 
     // Batch insert example data
     if (exampleData.length > 0) {
@@ -142,8 +240,8 @@ export async function POST(
       success: true,
       fileId: exampleFileId,
       parsedData: {
-        fieldNames: parseResult.fieldNames,
-        totalRows: parseResult.totalRows,
+        fieldNames: parseResult.fields?.map((f: any) => f.fieldName) || (parseResult as any).fieldNames || [],
+        totalRows: parseResult.metadata?.recordCount || (parseResult as any).totalRows || 0,
         mappedFields: Object.keys(fieldMappings).length
       }
     })
