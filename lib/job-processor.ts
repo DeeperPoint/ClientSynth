@@ -374,7 +374,13 @@ export class JobProcessor {
       })
 
       console.log("[v0] Starting data generation...")
-      await this.generateData(job)
+      try {
+        await this.generateData(job)
+        console.log("[v0] Data generation completed successfully")
+      } catch (genError) {
+        console.error("[v0] Error in generateData:", genError)
+        throw genError // Re-throw so outer catch handles it
+      }
 
       if (!this.isCancelled && !this.isPaused) {
         console.log("[v0] Job completed successfully, updating status...")
@@ -422,6 +428,19 @@ export class JobProcessor {
   private async generateData(job: JobData): Promise<void> {
     const { schema_definition, total_records, job_id, tenant_id, config } = job
     const fields = schema_definition?.fields || []
+
+    // Early validation
+    if (!fields || fields.length === 0) {
+      throw new Error("Schema has no fields defined")
+    }
+
+    if (total_records <= 0) {
+      throw new Error(`Invalid total_records: ${total_records}`)
+    }
+
+    if (!schema_definition) {
+      throw new Error("Schema definition is missing")
+    }
 
     console.log(`[v0][SERVER][JobProcessor] Generating ${total_records} records for ${fields.length} fields`)
     console.log(
