@@ -95,7 +95,7 @@ export default function JobDetailPage() {
   }
 
   const params = useParams()
-  // Use Postgres-backed API endpoints instead of Supabase client
+  // Use Postgres-backed API endpoints
 
   useEffect(() => {
     loadJobDetails()

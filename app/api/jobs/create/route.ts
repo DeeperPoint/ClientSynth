@@ -1,24 +1,18 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { createServerClient } from "@/lib/postgres/server"
+import { getCurrentUser, query } from "@/lib/postgres/client"
 
 export async function POST(request: NextRequest) {
   console.log("[v0] Job creation API called")
 
   try {
-    console.log("[v0] Creating PostgreSQL client...")
-    const db = await createServerClient()
-
     console.log("[v0] Getting user authentication...")
-    const {
-      data: { user },
-      error: authError,
-    } = await db.auth.getUser()
+    const user = await getCurrentUser()
 
-    if (authError || !user) {
-      console.log("[v0] No authenticated user; proceeding with schema tenant only")
-    } else {
-      console.log("[v0] User authenticated:", user.id)
+    if (!user) {
+      console.log("[v0] No authenticated user")
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
+    console.log("[v0] User authenticated:", user.id)
 
     console.log("[v0] Parsing request body...")
     const body = await request.json()
@@ -32,46 +26,63 @@ export async function POST(request: NextRequest) {
     }
 
     console.log("[v0] Fetching schema:", schema_id)
-    const { data: schema, error: schemaError } = await db
-      .from("schemas")
-      .select("id, tenant_id, name, schema_definition")
-      .eq("id", schema_id)
-      .single()
+    // Get user's tenant IDs for access check
+    const tenantsResult = await query(`
+      SELECT tenant_id FROM user_tenant_roles WHERE user_id = $1
+    `, [user.id])
+    const tenantIds = tenantsResult.rows.map(row => row.tenant_id)
 
-    if (schemaError || !schema) {
-      console.log("[v0] Schema not found:", schemaError)
+    const schemaResult = await query(`
+      SELECT id, tenant_id, name, schema_definition
+      FROM schemas
+      WHERE id = $1 AND tenant_id = ANY($2::uuid[])
+    `, [schema_id, tenantIds])
+
+    if (schemaResult.rows.length === 0) {
+      console.log("[v0] Schema not found or access denied")
       return NextResponse.json({ error: "Schema not found" }, { status: 404 })
     }
+    const schema = schemaResult.rows[0]
     console.log("[v0] Schema found:", schema.name)
 
     console.log("[v0] Creating job record...")
-    const { data: job, error: jobError } = await db
-      .from("jobs")
-      .insert({
-        tenant_id: schema.tenant_id,
-        schema_id,
-        name,
-        total_records: Number.parseInt(String(total_records)),
-        config,
-        created_by: user?.id ?? null,
-        status: "pending",
-      })
-      .select()
-      .single()
+    const jobResult = await query(`
+      INSERT INTO jobs (tenant_id, schema_id, name, total_records, config, created_by, status, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, 'pending', NOW(), NOW())
+      RETURNING *
+    `, [
+      schema.tenant_id,
+      schema_id,
+      name,
+      Number.parseInt(String(total_records)),
+      JSON.stringify(config),
+      user.id
+    ])
 
-    if (jobError) {
-      console.log("[v0] Job creation failed:", jobError)
-      return NextResponse.json({ error: jobError.message }, { status: 500 })
+    if (jobResult.rows.length === 0) {
+      console.log("[v0] Job creation failed")
+      return NextResponse.json({ error: "Failed to create job" }, { status: 500 })
     }
+    const job = jobResult.rows[0]
     console.log("[v0] Job created successfully:", job.id)
 
     console.log("[v0] Triggering job processing via API...")
     try {
-      // Use fetch to call the processing endpoint
-      // This ensures it runs independently of this request's lifecycle
-      const origin = request.nextUrl?.origin || process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_URL || "http://localhost:3000"
-      const baseUrl = origin.startsWith("http") ? origin : `https://${origin}`
-      const processUrl = `${baseUrl}/api/jobs/process`
+      // Determine the internal API URL for server-to-server calls
+      // Priority: INTERNAL_API_URL env var > localhost (for Nginx deployments) > request origin
+      let processUrl: string
+      
+      if (process.env.INTERNAL_API_URL) {
+        // Explicitly configured internal URL (e.g., for Docker, Kubernetes, etc.)
+        processUrl = `${process.env.INTERNAL_API_URL}/api/jobs/process`
+      } else if (process.env.NODE_ENV === 'production' && !process.env.VERCEL) {
+        // Production on traditional server (EC2, etc.) - use localhost to avoid SSL/proxy issues
+        // When behind Nginx: external HTTPS → Nginx → internal HTTP localhost:3000
+        processUrl = "http://localhost:3000/api/jobs/process"
+      } else {
+        // Development or serverless (Vercel) - use request origin
+        processUrl = `${request.nextUrl.origin}/api/jobs/process`
+      }
 
       console.log("[v0] Calling process endpoint:", processUrl)
 

@@ -114,7 +114,7 @@ export default function ExportPage() {
   const [recordLimit, setRecordLimit] = useState("")
 
   const params = useParams()
-  // Use Postgres-backed API endpoints instead of Supabase client
+  // Use Postgres-backed API endpoints
 
   useEffect(() => {
     loadJobAndExports()

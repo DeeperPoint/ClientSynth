@@ -1,17 +1,12 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { createServerClient } from "@/lib/postgres/server"
-import { query } from "@/lib/postgres/client"
+import { getCurrentUser, query } from "@/lib/postgres/client"
 import { ExportGenerator } from "@/lib/export-utils"
 
 export async function POST(request: NextRequest) {
   try {
-    const db = await createServerClient()
-    const {
-      data: { user },
-      error: authError,
-    } = await db.auth.getUser()
+    const user = await getCurrentUser()
 
-    if (authError || !user) {
+    if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 

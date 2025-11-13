@@ -1,4 +1,4 @@
--- PostgreSQL Migration: Remove Supabase dependencies and create standalone schema
+-- PostgreSQL Migration: Create standalone authentication schema
 -- This script creates all necessary tables and functions for the application
 
 -- Enable UUID extension

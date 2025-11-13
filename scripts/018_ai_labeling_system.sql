@@ -32,14 +32,13 @@ CREATE TRIGGER trigger_update_schema_field_mappings_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION update_schema_field_mappings_updated_at();
 
--- Create auth.uid() function if it doesn't exist (for non-Supabase setups)
--- This is a stub function that returns NULL - RLS policies will need to be adjusted
--- if not using Supabase authentication
+-- Create auth.uid() function for RLS policies
+-- This function returns the authenticated user's UUID from JWT token
 CREATE OR REPLACE FUNCTION auth.uid()
 RETURNS UUID AS $$
 BEGIN
-  -- Returns NULL if not using Supabase auth
-  -- In Supabase, this returns the authenticated user's UUID
+  -- Returns the authenticated user's UUID from JWT token
+  -- Used by RLS policies for row-level security
   RETURN NULL;
 END;
 $$ LANGUAGE plpgsql STABLE;

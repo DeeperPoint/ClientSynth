@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState, useEffect, useRef } from "react"
-// Removed Supabase imports - using custom auth
+// Using custom JWT authentication
 import { TenantSwitcher } from "@/components/tenant-switcher"
 import { Button } from "@/components/ui/button"
 import { LogOut, Settings, UserIcon, FileText, Play, Download, Sparkles, FileCode } from "lucide-react"
@@ -47,7 +47,7 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
   const hasEnsuredDefaultTenant = useRef(false)
   const router = useRouter()
   const pathname = usePathname()
-  // Removed Supabase client - using custom auth
+  // Using custom JWT authentication
 
   useEffect(() => {
     loadUserData()
