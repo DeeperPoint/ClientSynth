@@ -92,36 +92,9 @@ export async function POST(
       const universalParser = new UniversalFileParser()
       
       // Handle File object properly in server context
-      let fileToParse: File = file
-      if (!(file instanceof File)) {
-        // Create a File-like object if needed
-        const fileBuffer = await file.arrayBuffer()
-        const FilePolyfill = class {
-          name: string
-          type: string
-          size: number
-          private buffer: Buffer
-          
-          constructor(buffer: Buffer, name: string, options: { type?: string }) {
-            this.buffer = buffer
-            this.name = name
-            this.type = options.type || 'application/octet-stream'
-            this.size = buffer.length
-          }
-          
-          async arrayBuffer(): Promise<ArrayBuffer> {
-            return this.buffer.buffer.slice(this.buffer.byteOffset, this.buffer.byteOffset + this.buffer.byteLength)
-          }
-          
-          async text(): Promise<string> {
-            return this.buffer.toString('utf-8')
-          }
-        } as any
-        
-        fileToParse = new FilePolyfill(Buffer.from(fileBuffer), file.name, { type: file.type || 'application/octet-stream' }) as File
-      }
-      
-      parseResult = await universalParser.parseFile(fileToParse)
+      // In Next.js, FormData entries have File-like interface even if File class doesn't exist
+      // Just use the file directly - UniversalFileParser will handle it
+      parseResult = await universalParser.parseFile(file as File)
       if (!parseResult.success) {
         return NextResponse.json({ error: parseResult.error || 'Failed to parse file' }, { status: 400 })
       }

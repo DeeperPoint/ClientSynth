@@ -46,12 +46,14 @@ export class FileValidator {
     try {
       // Get file buffer
       let buffer: Buffer
-      if (file instanceof File) {
-        buffer = Buffer.from(await file.arrayBuffer())
-        fileName = fileName || file.name
-        mimeType = mimeType || file.type
+      // Check if File class exists and file is an instance of it (browser/Node 18+)
+      const isFile = typeof File !== 'undefined' && file instanceof File
+      if (isFile) {
+        buffer = Buffer.from(await (file as File).arrayBuffer())
+        fileName = fileName || (file as File).name
+        mimeType = mimeType || (file as File).type
       } else {
-        buffer = file
+        buffer = file as Buffer
       }
 
       // Check file size
