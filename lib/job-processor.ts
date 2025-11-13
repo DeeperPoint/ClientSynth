@@ -916,11 +916,8 @@ export class JobProcessor {
       // Store cleaned value
       record[field.name] = fieldValue
       
-      // Track the value for duplicate prevention (using cleaned value)
-      if (fieldValue) {
-        const normalizedValue = String(fieldValue).toLowerCase().trim()
-        this.generatedValuesPerField.get(jobKey)?.get(field.name)?.add(normalizedValue)
-      }
+      // NOTE: Values are NOT added to tracking set here - they're added after duplicate check passes
+      // in generateSingleRecordWithRetry to avoid infinite retry loops
     }
 
     if (job.config.enable_images !== false && imageFields.length > 0) {
