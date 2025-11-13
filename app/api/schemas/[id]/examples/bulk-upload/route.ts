@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { S3Uploader } from "@/lib/s3-uploader"
 import { LocalFileStorage } from "@/lib/local-file-storage"
 import { UniversalFileParser } from "@/lib/universal-file-parser"
+import { FileParser } from "@/lib/file-parser"
 import { FileValidator } from "@/lib/file-validator"
 import { getCurrentUser, query } from "@/lib/postgres/client"
 import crypto from "crypto"
@@ -199,8 +200,36 @@ export async function POST(
           } finally {
             await unlink(tempFilePath).catch(() => {})
           }
+        } else if (['csv', 'json', 'xlsx', 'xls'].includes(fileExtension)) {
+          // For simple file types, use FileParser directly
+          const fileParser = new FileParser()
+          const result = await fileParser.parseFile(file)
+          if (!result.success) {
+            throw new Error(result.error || 'Failed to parse file')
+          }
+          
+          // Convert FileParser result to UniversalFileParser format
+          parseResult = {
+            success: true,
+            fields: result.fieldNames.map((fieldName: string) => ({
+              fieldName,
+              fieldType: 'text',
+              exampleValues: result.data
+                .filter((item: any) => item.fieldName === fieldName)
+                .map((item: any) => item.exampleValue)
+                .slice(0, 10),
+              confidence: 0.8,
+              suggestedType: 'text' as const
+            })),
+            metadata: {
+              fileType: fileExtension,
+              fileSize: file.size,
+              recordCount: result.totalRows,
+              confidence: 0.8
+            }
+          }
         } else {
-          // For other file types, use the parser normally
+          // For other file types (TXT, XML, etc.), use UniversalFileParser
           // Create a File-like object that works in Node.js
           const FilePolyfill = class {
             name: string
@@ -219,9 +248,13 @@ export async function POST(
               return this.buffer.buffer.slice(this.buffer.byteOffset, this.buffer.byteOffset + this.buffer.byteLength)
             }
             
+            async text(): Promise<string> {
+              return this.buffer.toString('utf-8')
+            }
+            
             stream(): ReadableStream {
               return new ReadableStream({
-                start(controller) {
+                start: (controller) => {
                   controller.enqueue(new Uint8Array(this.buffer))
                   controller.close()
                 }
