@@ -11,8 +11,9 @@ function resolvePythonCommand(): string {
   const candidates = ['python3', 'python', 'py']
   for (const cmd of candidates) {
     try {
-      const res = spawnSync(cmd, ['-V'], { timeout: 2000 })
+      const res = spawnSync(cmd, ['-V'], { timeout: 2000, stdio: 'pipe' })
       if (res.status === 0 || (res.stderr && res.stderr.toString().length > 0)) {
+        console.log(`[PDFGenerator] Using Python command: ${cmd}`)
         return cmd
       }
     } catch {
@@ -20,6 +21,7 @@ function resolvePythonCommand(): string {
     }
   }
   // Fallback to python3 as it's most common on Linux
+  console.warn(`[PDFGenerator] Could not detect Python, defaulting to python3`)
   return 'python3'
 }
 
@@ -121,25 +123,45 @@ export class PDFGenerator {
           error += data.toString()
         })
 
+        python.on('error', (err: Error) => {
+          const errorMsg = err.code === 'ENOENT' 
+            ? `Python command '${pythonCmd}' not found. Please install Python 3.`
+            : `Failed to spawn Python process: ${err.message}`
+          console.error(`[PDFGenerator] ${errorMsg}`, err)
+          resolve({ success: false, error: errorMsg })
+        })
+
         python.on('close', (code) => {
           if (code !== 0) {
-            resolve({ success: false, error: error || 'Python process failed' })
+            resolve({ success: false, error: error || `Python process exited with code ${code}` })
+            return
+          }
+
+          const trimmedOutput = output.trim()
+          if (trimmedOutput.startsWith('<!DOCTYPE') || trimmedOutput.startsWith('<html')) {
+            resolve({ success: false, error: 'Received HTML error page instead of PDF data. Python script may have failed.' })
+            return
+          }
+
+          if (!trimmedOutput) {
+            resolve({ success: false, error: 'Python script produced no output' })
             return
           }
 
           try {
-            const result = JSON.parse(output)
+            const result = JSON.parse(trimmedOutput)
             resolve({
               success: result.success,
               pdfBase64: result.pdf_base64,
               error: result.error
             })
           } catch (e) {
-            resolve({ success: false, error: 'Failed to parse Python output' })
+            console.error('[PDFGenerator] Failed to parse Python output:', trimmedOutput.substring(0, 200))
+            resolve({ success: false, error: `Failed to parse Python output: ${e instanceof Error ? e.message : 'Unknown error'}` })
           }
         })
       } catch (e) {
-        resolve({ success: false, error: 'Failed to spawn Python process' })
+        resolve({ success: false, error: `Failed to create Python process: ${e instanceof Error ? e.message : 'Unknown error'}` })
       }
     })
   }
@@ -174,6 +196,19 @@ export class PDFGenerator {
           error += data.toString()
         })
 
+        python.on('error', (err: Error) => {
+          try {
+            unlinkSync(tempFile)
+          } catch (e) {
+            // Ignore cleanup errors
+          }
+          const errorMsg = err.code === 'ENOENT' 
+            ? `Python command '${pythonCmd}' not found. Please install Python 3.`
+            : `Failed to spawn Python process: ${err.message}`
+          console.error(`[PDFGenerator] ${errorMsg}`, err)
+          resolve({ success: false, error: errorMsg })
+        })
+
         python.on('close', (code) => {
           // Clean up temp file
           try {
@@ -183,20 +218,31 @@ export class PDFGenerator {
           }
           
           if (code !== 0) {
-            resolve({ success: false, error: error || 'Python process failed' })
+            resolve({ success: false, error: error || `Python process exited with code ${code}` })
+            return
+          }
+
+          const trimmedOutput = output.trim()
+          if (trimmedOutput.startsWith('<!DOCTYPE') || trimmedOutput.startsWith('<html')) {
+            resolve({ success: false, error: 'Received HTML error page instead of PDF data. Python script may have failed.' })
+            return
+          }
+
+          if (!trimmedOutput) {
+            resolve({ success: false, error: 'Python script produced no output' })
             return
           }
 
           try {
-            const result = JSON.parse(output)
-            // Map Python response to expected format
+            const result = JSON.parse(trimmedOutput)
             resolve({
               success: result.success,
               pdfBase64: result.pdf_base64,
               error: result.error
             })
           } catch (e) {
-            resolve({ success: false, error: 'Failed to parse Python output' })
+            console.error('[PDFGenerator] Failed to parse Python output:', trimmedOutput.substring(0, 200))
+            resolve({ success: false, error: `Failed to parse Python output: ${e instanceof Error ? e.message : 'Unknown error'}` })
           }
         })
       } catch (e) {
@@ -233,6 +279,19 @@ export class PDFGenerator {
           error += data.toString()
         })
 
+        python.on('error', (err: Error) => {
+          try {
+            unlinkSync(tempFile)
+          } catch (e) {
+            // Ignore cleanup errors
+          }
+          const errorMsg = err.code === 'ENOENT' 
+            ? `Python command '${pythonCmd}' not found. Please install Python 3.`
+            : `Failed to spawn Python process: ${err.message}`
+          console.error(`[PDFGenerator] ${errorMsg}`, err)
+          resolve({ success: false, error: errorMsg })
+        })
+
         python.on('close', (code) => {
           // Clean up temp file
           try {
@@ -242,20 +301,31 @@ export class PDFGenerator {
           }
           
           if (code !== 0) {
-            resolve({ success: false, error: error || 'Python process failed' })
+            resolve({ success: false, error: error || `Python process exited with code ${code}` })
+            return
+          }
+
+          const trimmedOutput = output.trim()
+          if (trimmedOutput.startsWith('<!DOCTYPE') || trimmedOutput.startsWith('<html')) {
+            resolve({ success: false, error: 'Received HTML error page instead of PDF data. Python script may have failed.' })
+            return
+          }
+
+          if (!trimmedOutput) {
+            resolve({ success: false, error: 'Python script produced no output' })
             return
           }
 
           try {
-            const result = JSON.parse(output)
-            // Map Python response to expected format
+            const result = JSON.parse(trimmedOutput)
             resolve({
               success: result.success,
               pdfBase64: result.pdf_base64,
               error: result.error
             })
           } catch (e) {
-            resolve({ success: false, error: 'Failed to parse Python output' })
+            console.error('[PDFGenerator] Failed to parse Python output:', trimmedOutput.substring(0, 200))
+            resolve({ success: false, error: `Failed to parse Python output: ${e instanceof Error ? e.message : 'Unknown error'}` })
           }
         })
       } catch (e) {
@@ -296,6 +366,23 @@ export class PDFGenerator {
           error += data.toString()
         })
 
+        // Handle spawn errors (e.g., command not found)
+        python.on('error', (err: Error) => {
+          // Clean up temp files
+          try {
+            unlinkSync(templateFile)
+            unlinkSync(dataFile)
+          } catch (e) {
+            // Ignore cleanup errors
+          }
+          
+          const errorMsg = err.code === 'ENOENT' 
+            ? `Python command '${pythonCmd}' not found. Please install Python 3.`
+            : `Failed to spawn Python process: ${err.message}`
+          console.error(`[PDFGenerator] ${errorMsg}`, err)
+          resolve({ success: false, error: errorMsg })
+        })
+
         python.on('close', (code) => {
           // Clean up temp files
           try {
@@ -306,19 +393,32 @@ export class PDFGenerator {
           }
 
           if (code !== 0) {
-            resolve({ success: false, error: error || 'Python process failed' })
+            resolve({ success: false, error: error || `Python process exited with code ${code}` })
+            return
+          }
+
+          // Check if output looks like HTML (error page) instead of JSON
+          const trimmedOutput = output.trim()
+          if (trimmedOutput.startsWith('<!DOCTYPE') || trimmedOutput.startsWith('<html')) {
+            resolve({ success: false, error: 'Received HTML error page instead of PDF data. Python script may have failed.' })
+            return
+          }
+
+          if (!trimmedOutput) {
+            resolve({ success: false, error: 'Python script produced no output' })
             return
           }
 
           try {
-            const result = JSON.parse(output)
+            const result = JSON.parse(trimmedOutput)
             resolve({
               success: result.success,
               pdfBase64: result.pdf_base64,
               error: result.error
             })
           } catch (e) {
-            resolve({ success: false, error: 'Failed to parse Python output' })
+            console.error('[PDFGenerator] Failed to parse Python output:', trimmedOutput.substring(0, 200))
+            resolve({ success: false, error: `Failed to parse Python output: ${e instanceof Error ? e.message : 'Unknown error'}` })
           }
         })
       } catch (e) {
