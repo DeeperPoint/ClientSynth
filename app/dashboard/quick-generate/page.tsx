@@ -82,7 +82,7 @@ export default function QuickGeneratePage() {
   const [recordCount, setRecordCount] = useState("50")
   const [isGenerating, setIsGenerating] = useState(false)
   const router = useRouter()
-  // Use server APIs for auth/tenants instead of Supabase client
+  // Use server APIs for auth/tenants
 
   const handleQuickGenerate = async () => {
     if (!selectedTemplate) return

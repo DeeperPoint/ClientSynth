@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { query } from "@/lib/postgres/client"
-import { createServerClient } from "@/lib/postgres/server"
+import { getCurrentUser, query } from "@/lib/postgres/client"
 import { AILabelingEngine } from "@/lib/ai-labeling-engine"
 
 export async function POST(
@@ -15,13 +14,9 @@ export async function POST(
     }
 
     // Verify authentication
-    const db = await createServerClient()
-    const {
-      data: { user },
-      error: authError,
-    } = await db.auth.getUser()
+    const user = await getCurrentUser()
 
-    if (authError || !user) {
+    if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
@@ -94,13 +89,9 @@ export async function GET(
     const schemaId = params.id
 
     // Verify authentication
-    const db = await createServerClient()
-    const {
-      data: { user },
-      error: authError,
-    } = await db.auth.getUser()
+    const user = await getCurrentUser()
 
-    if (authError || !user) {
+    if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
@@ -137,6 +128,7 @@ export async function GET(
     )
   }
 }
+
 
 
 

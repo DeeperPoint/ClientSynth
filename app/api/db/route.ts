@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
 		const raw = await req.json()
 		console.log('[API DB] Request body:', JSON.stringify(raw, null, 2))
 		
-		// Back-compat shim: accept legacy { op, filters, order, limit, values } from Supabase shim
+		// Back-compat: accept legacy { op, filters, order, limit, values } format
 		const body: Body = {
 			action: (raw.action || raw.op) as any,
 			table: raw.table,

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-// No Supabase client on the generate page; use API routes
+// Using API routes for data access
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"

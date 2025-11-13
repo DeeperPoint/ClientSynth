@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-// Removed Supabase import - using custom auth
+// Using custom JWT authentication
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
