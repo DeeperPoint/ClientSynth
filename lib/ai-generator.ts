@@ -8,6 +8,7 @@ export interface GenerationContext {
   schemaId?: string
   exampleData?: string[]
   previouslyGeneratedValues?: string[] // Values to avoid for uniqueness
+  temperature?: number // Optional temperature override for generation
 }
 
 export interface PDFGenerationContext extends GenerationContext {
@@ -90,7 +91,8 @@ export class AIGenerator {
 
     // Increase temperature for variation to reduce duplicates
     // Higher temperature = more creative/varied outputs
-    const temperature = 0.9 + (retryAttempt * 0.15) // 0.9, 1.05, 1.2, 1.35 for retries
+    // Use context temperature if provided, otherwise calculate from retry attempt
+    const temperature = context.temperature ?? (0.9 + (retryAttempt * 0.15)) // 0.9, 1.05, 1.2, 1.35 for retries
 
     console.log(`[AIGenerator] Generating with OpenRouter: ${this.model} (max_tokens: ${maxTokens}, temperature: ${temperature})`)
 

@@ -458,7 +458,7 @@ export class JobProcessor {
       console.warn('[v0] Failed to load existing records, starting fresh:', e)
     }
 
-    const batchSize = Math.min((config as any).batch_size || 5, 10)
+    const batchSize = (config as any).batch_size || 10
     const recoveryState = this.getRecoveryState(job_id)
     // Start from 0 if no records generated yet, otherwise continue from last successful + 1
     let generatedCount = recoveryState.lastSuccessfulRecord === -1 ? 0 : recoveryState.lastSuccessfulRecord + 1
@@ -766,8 +766,15 @@ export class JobProcessor {
               console.log(`[v0] Using AI generation for field: ${field.name} (attempt ${attempts})`)
               
               // Pass previously generated values to AI to avoid duplicates
-              const previousValues = Array.from(existingValues).slice(-20) // Last 20 values to avoid
+              // Show more previous values to help AI avoid duplicates
+              const previousValues = Array.from(existingValues).slice(-50) // Last 50 values to avoid (increased from 20)
               context.previouslyGeneratedValues = previousValues
+              
+              // Increase temperature slightly on retries to encourage variation
+              const retryTemperature = attempts > 1 ? 1.2 : undefined
+              if (retryTemperature) {
+                context.temperature = retryTemperature
+              }
               
               fieldValue = await this.aiGenerator.generateFieldValue(context, attempts - 1)
               
@@ -776,11 +783,20 @@ export class JobProcessor {
                 throw new Error(`AI generated empty value for required field ${field.name}`)
               }
               
-              // Check for duplicate
+              // Check for duplicate - but allow some duplicates for realistic data (names can repeat)
               const normalizedValue = String(fieldValue).toLowerCase().trim()
               if (existingValues.has(normalizedValue)) {
-                console.warn(`[v0] AI generated duplicate value for ${field.name}: ${fieldValue}`)
-                throw new Error(`Generated duplicate value for field ${field.name}`)
+                // For name fields, allow duplicates if we've generated many records (realistic data)
+                const isNameField = field.type === 'name' || field.name.toLowerCase().includes('name')
+                const totalGenerated = existingValues.size
+                
+                if (isNameField && totalGenerated > 20 && attempts < maxRetries) {
+                  // Allow duplicate names if we have many records (realistic - people can have same names)
+                  console.log(`[v0] Allowing duplicate name "${fieldValue}" (realistic data, ${totalGenerated} records generated)`)
+                } else {
+                  console.warn(`[v0] AI generated duplicate value for ${field.name}: ${fieldValue}`)
+                  throw new Error(`Generated duplicate value for field ${field.name}`)
+                }
               }
               
               console.log(`[v0] AI generated for ${field.name}:`, fieldValue)
