@@ -1,7 +1,27 @@
-import { spawn } from 'child_process'
+import { spawn, spawnSync } from 'child_process'
 import { writeFileSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { S3Uploader } from './s3-uploader'
+
+/**
+ * Resolves the correct Python command to use.
+ * Tries 'python3', 'python', and 'py' in that order.
+ */
+function resolvePythonCommand(): string {
+  const candidates = ['python3', 'python', 'py']
+  for (const cmd of candidates) {
+    try {
+      const res = spawnSync(cmd, ['-V'], { timeout: 2000 })
+      if (res.status === 0 || (res.stderr && res.stderr.toString().length > 0)) {
+        return cmd
+      }
+    } catch {
+      // Continue to next candidate
+    }
+  }
+  // Fallback to python3 as it's most common on Linux
+  return 'python3'
+}
 
 export interface PDFField {
   name: string
@@ -78,7 +98,8 @@ export class PDFGenerator {
   async createFromContent(options: PDFContentOptions): Promise<{ success: boolean; pdfBase64?: string; error?: string }> {
     return new Promise((resolve) => {
       try {
-        const python = spawn('python', [
+        const pythonCmd = resolvePythonCommand()
+        const python = spawn(pythonCmd, [
           'lib/pdf_service.py',
           'content',
           options.title,
@@ -130,7 +151,8 @@ export class PDFGenerator {
       try {
         writeFileSync(tempFile, JSON.stringify(options.fields))
         
-        const python = spawn('python', [
+        const pythonCmd = resolvePythonCommand()
+        const python = spawn(pythonCmd, [
           'lib/pdf_service.py',
           'template',
           options.title,
@@ -190,7 +212,8 @@ export class PDFGenerator {
       try {
         writeFileSync(tempFile, JSON.stringify(options.data))
         
-        const python = spawn('python', [
+        const pythonCmd = resolvePythonCommand()
+        const python = spawn(pythonCmd, [
           'lib/pdf_service.py',
           'fill',
           options.pdfBase64,
@@ -250,7 +273,8 @@ export class PDFGenerator {
         writeFileSync(templateFile, JSON.stringify(options.templateConfig))
         writeFileSync(dataFile, JSON.stringify(options.data))
 
-        const python = spawn('python', [
+        const pythonCmd = resolvePythonCommand()
+        const python = spawn(pythonCmd, [
           'lib/pdf_service.py',
           'generate',
           templateFile,
