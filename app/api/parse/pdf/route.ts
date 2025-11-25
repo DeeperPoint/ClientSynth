@@ -4,15 +4,43 @@ import path from 'path'
 import { writeFile, unlink } from 'fs/promises'
 import { randomUUID } from 'crypto'
 import os from 'os'
+import { getCurrentUser } from '@/lib/postgres/client'
+import { FileValidator } from '@/lib/file-validator'
 
 export async function POST(request: NextRequest) {
   try {
+    // Authentication check
+    const user = await getCurrentUser()
+    if (!user) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+
     const formData = await request.formData()
     const file = formData.get('file') as File
     
     if (!file) {
       return NextResponse.json(
         { error: 'No file provided' },
+        { status: 400 }
+      )
+    }
+
+    // Validate file before processing
+    const validation = await FileValidator.validateFile(file)
+    if (!validation.valid) {
+      return NextResponse.json(
+        { error: validation.error || 'File validation failed' },
+        { status: 400 }
+      )
+    }
+
+    // Ensure file is PDF type
+    if (validation.detectedType !== 'pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+      return NextResponse.json(
+        { error: 'File must be a PDF document' },
         { status: 400 }
       )
     }

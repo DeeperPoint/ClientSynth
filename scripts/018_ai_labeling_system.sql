@@ -39,7 +39,13 @@ RETURNS UUID AS $$
 BEGIN
   -- Returns the authenticated user's UUID from JWT token
   -- Used by RLS policies for row-level security
-  RETURN NULL;
+  -- Attempts to get user ID from JWT claim 'sub' (standard JWT claim)
+  -- Falls back to 'userId' if 'sub' is not available
+  RETURN COALESCE(
+    NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid,
+    NULLIF(current_setting('request.jwt.claim.userId', true), '')::uuid,
+    NULL
+  );
 END;
 $$ LANGUAGE plpgsql STABLE;
 

@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { getCurrentUser, query } from "@/lib/postgres/client"
+import { getCurrentUser, query, hasTenantAccess } from "@/lib/postgres/client"
 import { ExportGenerator } from "@/lib/export-utils"
 
 export async function POST(request: NextRequest) {
@@ -35,6 +35,12 @@ export async function POST(request: NextRequest) {
     }
 
     const job = jobResult.rows[0]
+
+    // Verify user has access to the job's tenant
+    const hasAccess = await hasTenantAccess(user.id, job.tenant_id)
+    if (!hasAccess) {
+      return NextResponse.json({ error: "Forbidden: You do not have access to this job" }, { status: 403 })
+    }
 
     if (job.status !== "completed") {
       return NextResponse.json({ error: "Job must be completed before exporting" }, { status: 400 })

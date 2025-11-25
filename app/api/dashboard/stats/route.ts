@@ -1,14 +1,24 @@
 import { NextRequest, NextResponse } from "next/server"
-import { query } from "@/lib/postgres/client"
+import { query, getCurrentUser } from "@/lib/postgres/client"
 
 export async function GET(request: NextRequest) {
   try {
-    // Get all tenants (simplified for now - will add auth later)
+    // Authentication check
+    const user = await getCurrentUser()
+    if (!user) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+
     console.log('[Dashboard Stats] Starting...')
+    // Get only tenants the user belongs to
     const tenantsResult = await query(`
       SELECT DISTINCT tenant_id 
       FROM user_tenant_roles
-    `)
+      WHERE user_id = $1
+    `, [user.id])
 
     console.log('[Dashboard Stats] Tenants result:', tenantsResult.rows)
     const tenantIds = tenantsResult.rows.map(row => row.tenant_id)

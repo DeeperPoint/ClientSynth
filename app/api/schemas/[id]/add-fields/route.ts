@@ -1,11 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query } from '@/lib/postgres/client'
+import { query, getCurrentUser, hasTenantAccess } from '@/lib/postgres/client'
 
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
+    // Authentication check
+    const user = await getCurrentUser()
+    if (!user) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+
     const schemaId = params.id
     const { fields } = await request.json()
 
@@ -18,9 +27,9 @@ export async function POST(
 
     console.log(`[AddFields] Adding ${fields.length} fields to schema ${schemaId}`)
 
-    // Fetch current schema
+    // Fetch current schema with tenant_id
     const schemaResult = await query(
-      'SELECT schema_definition FROM schemas WHERE id = $1',
+      'SELECT schema_definition, tenant_id FROM schemas WHERE id = $1',
       [schemaId]
     )
 
@@ -31,7 +40,18 @@ export async function POST(
       )
     }
 
-    const currentDefinition = schemaResult.rows[0].schema_definition
+    const schema = schemaResult.rows[0]
+    
+    // Verify user has access to the schema's tenant
+    const hasAccess = await hasTenantAccess(user.id, schema.tenant_id)
+    if (!hasAccess) {
+      return NextResponse.json(
+        { error: 'Forbidden: You do not have access to this schema' },
+        { status: 403 }
+      )
+    }
+
+    const currentDefinition = schema.schema_definition
     const currentFields = currentDefinition.fields || []
 
     // Add new fields with IDs
