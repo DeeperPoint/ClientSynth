@@ -11,7 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Plus, FileText, Calendar, Users, MoreVertical, Edit, Trash2, Play, Sparkles } from "lucide-react"
+import { Plus, FileText, Calendar, Users, MoreVertical, Edit, Trash2, Play, Sparkles, Search } from "lucide-react"
 import Link from "next/link"
 import { toast } from "sonner"
 import { UI_CONFIG } from "@/lib/ui-config"
@@ -156,16 +156,29 @@ export default function SchemasPage() {
           </h1>
           <p className="text-lg text-muted-foreground">Design and manage your synthetic data generation schemas</p>
         </div>
-        <Button
-          asChild
-          size="lg"
-          className={`gradient-primary text-white shadow-medium hover:shadow-soft ${UI_CONFIG.animation.transition}`}
-        >
-          <Link href="/dashboard/schema/new">
-            <Plus className="mr-2 h-5 w-5" />
-            Create Schema
-          </Link>
-        </Button>
+        <div className="flex gap-3">
+          <Button
+            asChild
+            variant="outline"
+            size="lg"
+            className={`shadow-medium hover:shadow-soft ${UI_CONFIG.animation.transition}`}
+          >
+            <Link href="/dashboard/schemas/discover">
+              <Search className="mr-2 h-5 w-5" />
+              Discover Schema
+            </Link>
+          </Button>
+          <Button
+            asChild
+            size="lg"
+            className={`gradient-primary text-white shadow-medium hover:shadow-soft ${UI_CONFIG.animation.transition}`}
+          >
+            <Link href="/dashboard/schema/new">
+              <Plus className="mr-2 h-5 w-5" />
+              Create Schema
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {schemas.length === 0 ? (

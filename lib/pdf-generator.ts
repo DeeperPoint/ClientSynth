@@ -124,9 +124,12 @@ export class PDFGenerator {
         })
 
         python.on('error', (err: Error) => {
-          const errorMsg = err.code === 'ENOENT' 
-            ? `Python command '${pythonCmd}' not found. Please install Python 3.`
-            : `Failed to spawn Python process: ${err.message}`
+          let errorMsg: string
+          if (err.code === 'ENOENT') {
+            errorMsg = `Python command '${pythonCmd}' not found. Please install Python 3 on the server.`
+          } else {
+            errorMsg = `Failed to spawn Python process: ${err.message}`
+          }
           console.error(`[PDFGenerator] ${errorMsg}`, err)
           resolve({ success: false, error: errorMsg })
         })
@@ -202,9 +205,12 @@ export class PDFGenerator {
           } catch (e) {
             // Ignore cleanup errors
           }
-          const errorMsg = err.code === 'ENOENT' 
-            ? `Python command '${pythonCmd}' not found. Please install Python 3.`
-            : `Failed to spawn Python process: ${err.message}`
+          let errorMsg: string
+          if (err.code === 'ENOENT') {
+            errorMsg = `Python command '${pythonCmd}' not found. Please install Python 3 on the server.`
+          } else {
+            errorMsg = `Failed to spawn Python process: ${err.message}`
+          }
           console.error(`[PDFGenerator] ${errorMsg}`, err)
           resolve({ success: false, error: errorMsg })
         })
@@ -285,9 +291,12 @@ export class PDFGenerator {
           } catch (e) {
             // Ignore cleanup errors
           }
-          const errorMsg = err.code === 'ENOENT' 
-            ? `Python command '${pythonCmd}' not found. Please install Python 3.`
-            : `Failed to spawn Python process: ${err.message}`
+          let errorMsg: string
+          if (err.code === 'ENOENT') {
+            errorMsg = `Python command '${pythonCmd}' not found. Please install Python 3 on the server.`
+          } else {
+            errorMsg = `Failed to spawn Python process: ${err.message}`
+          }
           console.error(`[PDFGenerator] ${errorMsg}`, err)
           resolve({ success: false, error: errorMsg })
         })
@@ -376,9 +385,12 @@ export class PDFGenerator {
             // Ignore cleanup errors
           }
           
-          const errorMsg = err.code === 'ENOENT' 
-            ? `Python command '${pythonCmd}' not found. Please install Python 3.`
-            : `Failed to spawn Python process: ${err.message}`
+          let errorMsg: string
+          if (err.code === 'ENOENT') {
+            errorMsg = `Python command '${pythonCmd}' not found. Please install Python 3 on the server.`
+          } else {
+            errorMsg = `Failed to spawn Python process: ${err.message}`
+          }
           console.error(`[PDFGenerator] ${errorMsg}`, err)
           resolve({ success: false, error: errorMsg })
         })
@@ -393,6 +405,16 @@ export class PDFGenerator {
           }
 
           if (code !== 0) {
+            // Check if error mentions missing modules
+            const errorLower = error.toLowerCase()
+            if (errorLower.includes('no module named') || errorLower.includes('missing dependencies')) {
+              const missingModule = error.match(/No module named ['"]([^'"]+)['"]/)?.[1] || 'unknown'
+              resolve({ 
+                success: false, 
+                error: `Python dependencies not installed. Missing module: ${missingModule}. Please run: python3 -m pip install -r requirements.txt on the server.` 
+              })
+              return
+            }
             resolve({ success: false, error: error || `Python process exited with code ${code}` })
             return
           }
@@ -401,6 +423,16 @@ export class PDFGenerator {
           const trimmedOutput = output.trim()
           if (trimmedOutput.startsWith('<!DOCTYPE') || trimmedOutput.startsWith('<html')) {
             resolve({ success: false, error: 'Received HTML error page instead of PDF data. Python script may have failed.' })
+            return
+          }
+          
+          // Check if output contains Python traceback/error
+          if (trimmedOutput.includes('ModuleNotFoundError') || trimmedOutput.includes('ImportError') || trimmedOutput.includes('Missing dependencies')) {
+            const missingModule = trimmedOutput.match(/No module named ['"]([^'"]+)['"]/)?.[1] || 'unknown'
+            resolve({ 
+              success: false, 
+              error: `Python dependencies not installed. Missing module: ${missingModule}. Please run: python3 -m pip install -r requirements.txt on the server.` 
+            })
             return
           }
 
