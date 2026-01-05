@@ -1,3 +1,5 @@
+import { PersonaContext } from "./types/schema-extensions"
+
 export interface GenerationContext {
   fieldType: string
   fieldName: string
@@ -9,6 +11,7 @@ export interface GenerationContext {
   exampleData?: string[]
   previouslyGeneratedValues?: string[] // Values to avoid for uniqueness
   temperature?: number // Optional temperature override for generation
+  personaContext?: PersonaContext // Persona context for consistent generation
 }
 
 export interface PDFGenerationContext extends GenerationContext {
@@ -349,10 +352,17 @@ IMPORTANT:
   }
 
   private buildPrompt(context: GenerationContext, exampleData?: string[], retryAttempt: number = 0): string {
-    const { fieldName, fieldDescription, existingData, recordIndex, previouslyGeneratedValues } = context
+    const { fieldName, fieldDescription, existingData, recordIndex, previouslyGeneratedValues, personaContext } = context
     
     // CHANGED: Don't include "for field: {fieldName}" in the prompt to avoid leakage
     const parts: string[] = [`Generate a unique, realistic value.`]
+
+    // Inject persona context if available (this is the key addition for section 1.1)
+    if (personaContext && Object.keys(personaContext).length > 0) {
+      const personaDescription = this.formatPersonaContext(personaContext)
+      parts.push(`Persona Context: ${personaDescription}`)
+      parts.push(`All generated values must be consistent with this persona context.`)
+    }
 
     if (fieldDescription) {
       parts.push(`Context: ${fieldDescription}`)
@@ -404,6 +414,29 @@ IMPORTANT:
     parts.push(`- NEVER include trailing numbers, timestamps, or suffixes in the value`)
 
     return parts.join("\n")
+  }
+
+  /**
+   * Format persona context into a readable string for prompts
+   */
+  private formatPersonaContext(personaContext: PersonaContext): string {
+    const formatted: string[] = []
+    
+    for (const [key, value] of Object.entries(personaContext)) {
+      if (value !== null && value !== undefined) {
+        if (typeof value === 'object' && !Array.isArray(value)) {
+          // For nested objects, format them nicely
+          const nestedPairs = Object.entries(value)
+            .map(([k, v]) => `${k}: ${v}`)
+            .join(", ")
+          formatted.push(`${key} (${nestedPairs})`)
+        } else {
+          formatted.push(`${key}: ${value}`)
+        }
+      }
+    }
+    
+    return formatted.join(", ")
   }
 
   async generateBatch(contexts: GenerationContext[]): Promise<string[]> {
