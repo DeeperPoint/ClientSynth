@@ -3,6 +3,8 @@ import { AIGenerator, type GenerationContext, type PDFGenerationContext } from "
 import { ImageGenerator } from "@/lib/image-generator"
 import { S3Uploader } from "@/lib/s3-uploader"
 import { PDFGenerator } from "@/lib/pdf-generator"
+import { PersonaGenerator } from "@/lib/intelligence/persona-generator"
+import { PersonaContext } from "@/lib/types/schema-extensions"
 
 export interface JobData {
   job_id: string
@@ -67,6 +69,9 @@ export class JobProcessor {
   
   // Track generated values per field to enforce strict uniqueness
   private generatedValuesPerField = new Map<string, Map<string, Set<string>>>()
+  
+  // Store persona context per job (Task 3: Persona Context)
+  private jobPersonaContext = new Map<string, PersonaContext>()
 
   constructor() {
     console.log("[v0] JobProcessor constructor called")
@@ -193,19 +198,26 @@ export class JobProcessor {
   }
 
   private async resumeJob(): Promise<void> {
-    if (!this.currentJob) return
+    // Get jobId from currentJob if available, otherwise we can't resume (shouldn't happen)
+    const jobId = this.currentJob?.job_id
+    if (!jobId) {
+      console.warn("[JobProcessor] Cannot resume: no current job")
+      return
+    }
 
     this.isPaused = false
-    const recoveryState = this.getRecoveryState(this.currentJob.job_id)
+    const recoveryState = this.getRecoveryState(jobId)
     recoveryState.resumedAt = new Date().toISOString()
 
+    // Set status to 'pending' so processNextJob can pick it up and continue
+    // The recovery state will ensure it continues from where it left off
     await query(`
       UPDATE jobs 
-      SET status = 'running', recovery_state = $1, updated_at = NOW()
+      SET status = 'pending', recovery_state = $1, updated_at = NOW()
       WHERE id = $2
-    `, [JSON.stringify(recoveryState), this.currentJob.job_id])
+    `, [JSON.stringify(recoveryState), jobId])
 
-    await this.logJobMessage(this.currentJob.job_id, "info", "Job resumed by user request")
+    await this.logJobMessage(jobId, "info", "Job resumed by user request - will continue from last checkpoint")
   }
 
   private async cancelJob(): Promise<void> {
@@ -344,8 +356,20 @@ export class JobProcessor {
       })
 
       this.currentJob = job
-      this.isPaused = false
       this.isCancelled = false
+      
+      // If job was paused, check if it's still paused or should resume
+      if (jobRow.status === 'paused') {
+        // Check if job status is still paused (might have been resumed)
+        const statusCheck = await query(`SELECT status FROM jobs WHERE id = $1`, [job.job_id])
+        if (statusCheck.rows[0]?.status === 'paused') {
+          this.isPaused = true
+        } else {
+          this.isPaused = false
+        }
+      } else {
+        this.isPaused = false
+      }
 
       if (jobRow.recovery_state) {
         console.log("[v0] Loading recovery state:", jobRow.recovery_state)
@@ -361,11 +385,20 @@ export class JobProcessor {
       this.aiGenerator.setModel(textModel)
 
       console.log("[v0] Updating job status to running...")
-      await query(`
-        UPDATE jobs 
-        SET status = 'running', started_at = NOW(), updated_at = NOW()
-        WHERE id = $1
-      `, [job.job_id])
+      // Only set started_at if job wasn't previously running (to preserve original start time on resume)
+      if (jobRow.status === 'paused') {
+        await query(`
+          UPDATE jobs 
+          SET status = 'running', started_at = COALESCE(started_at, NOW()), updated_at = NOW()
+          WHERE id = $1
+        `, [job.job_id])
+      } else {
+        await query(`
+          UPDATE jobs 
+          SET status = 'running', started_at = NOW(), updated_at = NOW()
+          WHERE id = $1
+        `, [job.job_id])
+      }
 
       await this.logJobMessage(job.job_id, "info", `Started processing job: ${job.name}`, {
         textModel,
@@ -379,6 +412,10 @@ export class JobProcessor {
         console.log("[v0] Data generation completed successfully")
       } catch (genError) {
         console.error("[v0] Error in generateData:", genError)
+        console.error("[v0] Error stack:", genError instanceof Error ? genError.stack : "No stack trace")
+        await this.logJobMessage(job.job_id, "error", `Data generation failed: ${genError instanceof Error ? genError.message : String(genError)}`, {
+          error: genError instanceof Error ? genError.stack : String(genError)
+        })
         throw genError // Re-throw so outer catch handles it
       }
 
@@ -448,12 +485,42 @@ export class JobProcessor {
       fields.map((f: any) => ({ name: f.name, type: f.type })),
     )
 
-    // Initialize field-level tracking for this job
+    // Generate persona context for this job (Task 2 & 3: Persona Context)
+    let personaContext: PersonaContext | undefined = undefined
+    try {
+      console.log(`[v0][SERVER][JobProcessor] 🎭 Generating persona context for schema ${job.schema_id}...`)
+      await this.logJobMessage(job_id, "info", "🎭 Generating persona context for consistent data generation...")
+      const personaGenerator = new PersonaGenerator()
+      personaContext = await personaGenerator.generateSeedPersona(job.schema_id)
+      console.log(`[v0][SERVER][JobProcessor] ✅ Persona context generated:`, JSON.stringify(personaContext, null, 2))
+      // Store persona context for this job
+      this.jobPersonaContext.set(job_id, personaContext)
+      // Log persona context to job logs for visibility
+      await this.logJobMessage(job_id, "info", `✅ Persona context generated: ${Object.keys(personaContext).length} properties`, {
+        personaContext: personaContext
+      })
+      console.log(`[v0][SERVER][JobProcessor] Persona context stored for job ${job_id}`)
+    } catch (personaError) {
+      console.warn(`[v0][SERVER][JobProcessor] ⚠️ Failed to generate persona context, continuing without it:`, personaError)
+      await this.logJobMessage(job_id, "warn", `⚠️ Persona context generation failed, continuing without it: ${personaError instanceof Error ? personaError.message : String(personaError)}`)
+      // Continue without persona context - it's optional
+    }
+
+    console.log(`[v0][SERVER][JobProcessor] ✅ Continuing with data generation after persona context...`)
+
+    // Initialize field-level tracking for this job (jobKey must be in outer scope)
     const jobKey = job_id
-    this.generatedValuesPerField.set(jobKey, new Map())
-    fields.forEach((field: any) => {
-      this.generatedValuesPerField.get(jobKey)!.set(field.name, new Set())
-    })
+    try {
+      console.log(`[v0][SERVER][JobProcessor] Initializing field-level tracking for ${fields.length} fields...`)
+      this.generatedValuesPerField.set(jobKey, new Map())
+      fields.forEach((field: any) => {
+        this.generatedValuesPerField.get(jobKey)!.set(field.name, new Set())
+      })
+      console.log(`[v0][SERVER][JobProcessor] Field-level tracking initialized`)
+    } catch (trackingError) {
+      console.error(`[v0][SERVER][JobProcessor] Error initializing field tracking:`, trackingError)
+      throw new Error(`Failed to initialize field tracking: ${trackingError instanceof Error ? trackingError.message : String(trackingError)}`)
+    }
 
     // Load existing values from database to prevent duplicates
     try {
@@ -489,6 +556,13 @@ export class JobProcessor {
       lastSuccessful: recoveryState.lastSuccessfulRecord
     })
 
+    console.log(`[v0][SERVER][JobProcessor] 🚀 Starting record generation loop (${generatedCount} to ${total_records})...`)
+    
+    if (generatedCount >= total_records) {
+      console.log(`[v0][SERVER][JobProcessor] All records already generated (${generatedCount}/${total_records}), skipping generation loop`)
+      return
+    }
+
     // Generate exactly total_records records (indices 0 to total_records-1)
     for (let i = generatedCount; i < total_records; i += batchSize) {
       if (this.isCancelled) {
@@ -497,9 +571,22 @@ export class JobProcessor {
         return
       }
 
-      if (this.isPaused) {
-        console.log("[v0] Job generation paused")
-        await this.logJobMessage(job_id, "info", "Job generation paused")
+      // Wait if paused - poll until resumed
+      while (this.isPaused && !this.isCancelled) {
+        // Check database status in case it was resumed externally
+        const statusCheck = await query(`SELECT status FROM jobs WHERE id = $1`, [job_id])
+        if (statusCheck.rows[0]?.status !== 'paused') {
+          console.log("[v0] Job resumed from database, continuing...")
+          this.isPaused = false
+          break
+        }
+        
+        console.log("[v0] Job is paused, waiting...")
+        await this.logJobMessage(job_id, "info", "Job generation paused - waiting for resume")
+        await new Promise(resolve => setTimeout(resolve, 1000)) // Wait 1 second before checking again
+      }
+
+      if (this.isCancelled) {
         return
       }
 
@@ -509,6 +596,28 @@ export class JobProcessor {
       console.log(`[v0] Processing batch ${i}-${batchEnd - 1}`)
 
       for (let recordIndex = i; recordIndex < batchEnd; recordIndex++) {
+        // Check for pause/cancel before each record
+        if (this.isCancelled) {
+          console.log("[v0] Job generation cancelled")
+          await this.logJobMessage(job_id, "info", "Job generation cancelled")
+          return
+        }
+
+        // Check if paused - wait if so
+        while (this.isPaused && !this.isCancelled) {
+          const statusCheck = await query(`SELECT status FROM jobs WHERE id = $1`, [job_id])
+          if (statusCheck.rows[0]?.status !== 'paused') {
+            console.log("[v0] Job resumed, continuing record generation...")
+            this.isPaused = false
+            break
+          }
+          await new Promise(resolve => setTimeout(resolve, 1000))
+        }
+
+        if (this.isCancelled) {
+          return
+        }
+
         try {
           console.log(`[v0] Generating record ${recordIndex + 1}/${total_records}`)
           const record = await this.generateSingleRecordWithRetry(fields, recordIndex, job, jobKey)
@@ -711,6 +820,7 @@ export class JobProcessor {
               existingData: record,
               tenantContext: job.tenant_id,
               schemaId: job.schema_id,
+              personaContext: this.jobPersonaContext.get(job.job_id), // Task 3: Add persona context
             }
             
             // Pass previously generated values for uniqueness
@@ -779,6 +889,7 @@ export class JobProcessor {
               existingData: record,
               tenantContext: job.tenant_id,
               schemaId: job.schema_id,
+              personaContext: this.jobPersonaContext.get(job.job_id), // Task 3: Add persona context
             }
 
             if (this.shouldUseAI(field.type)) {
