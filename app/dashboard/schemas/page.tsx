@@ -44,7 +44,10 @@ export default function SchemasPage() {
     loadSchemas()
   }, [])
 
-  const loadSchemas = async () => {
+  const loadSchemas = async (setLoading: boolean = true) => {
+    if (setLoading) {
+      setIsLoading(true)
+    }
     try {
       console.log('[Schemas] Starting to load schemas...')
       
@@ -92,7 +95,9 @@ export default function SchemasPage() {
       console.error("[Schemas] Error loading schemas:", error)
       toast.error("Failed to load schemas")
     } finally {
-      setIsLoading(false)
+      if (setLoading) {
+        setIsLoading(false)
+      }
     }
   }
 
@@ -101,24 +106,31 @@ export default function SchemasPage() {
   }
 
   const confirmDelete = async () => {
-    setDeletingId(deleteDialog.schemaId)
+    const schemaIdToDelete = deleteDialog.schemaId
+    const schemaNameToDelete = deleteDialog.schemaName
+    setDeletingId(schemaIdToDelete)
     try {
       const res = await fetch('/api/db', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'delete', table: 'schemas', where: { op: 'eq', column: 'id', value: deleteDialog.schemaId } }),
+        body: JSON.stringify({ action: 'delete', table: 'schemas', where: { op: 'eq', column: 'id', value: schemaIdToDelete } }),
       })
       if (!res.ok) {
         const j = await res.json().catch(() => ({}))
         throw new Error(j?.error || 'Delete failed')
       }
 
-      setSchemas(schemas.filter((s) => s.id !== deleteDialog.schemaId))
-      toast.success(`Schema "${deleteDialog.schemaName}" deleted successfully`)
+      // Clear deleting state and dialog first
+      setDeletingId(null)
+      setDeleteDialog({ open: false, schemaId: "", schemaName: "" })
+      
+      toast.success(`Schema "${schemaNameToDelete}" deleted successfully`)
+      
+      // Reload the page to ensure hover states are properly initialized
+      window.location.reload()
     } catch (error) {
       console.error("Error deleting schema:", error)
       toast.error("Failed to delete schema")
-    } finally {
       setDeletingId(null)
       setDeleteDialog({ open: false, schemaId: "", schemaName: "" })
     }
