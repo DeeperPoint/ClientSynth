@@ -65,17 +65,20 @@ class BatchGenerateRequest(BaseModel):
 def batch_generate(req: BatchGenerateRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _assert_tenant_access(db, user.id, req.tenant_id)
     gen = BatchImageGenerator(db)
-    results = gen.generate(
-        tenant_id=req.tenant_id,
-        seed_id=req.seed_id,
-        total_outputs=req.total_outputs,
-        repeat_per_image=max(1, int(req.repeat_per_image)),
-        prompt=req.prompt,
-        style=req.style,
-        job_id=req.job_id,
-        record_prefix="batch",
-        field_name="image",
-    )
+    try:
+        results = gen.generate(
+            tenant_id=req.tenant_id,
+            seed_id=req.seed_id,
+            total_outputs=req.total_outputs,
+            repeat_per_image=max(1, int(req.repeat_per_image)),
+            prompt=req.prompt,
+            style=req.style,
+            job_id=req.job_id,
+            record_prefix="batch",
+            field_name="image",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     return results
 
 
