@@ -1,8 +1,9 @@
+import logging
 from typing import Iterable, List, Tuple
 from sqlalchemy.orm import Session
 
 from app.models.seeds import Seed, SeedImage
-from app.services.image_provider import get_image_provider
+from app.services.image_provider import get_image_provider, LocalSeedImageProvider
 from app.services.storage import LocalStorage
 
 
@@ -17,6 +18,7 @@ class BatchImageGenerator:
         self.db = db
         self.provider = get_image_provider()
         self.storage = LocalStorage()
+        self.logger = logging.getLogger(__name__)
 
     def generate(
         self,
@@ -43,28 +45,36 @@ class BatchImageGenerator:
         if not images:
             return []
 
+        # Build a flat schedule: each seed image repeated `repeat_per_image` times,
+        # then cycle the whole list until we reach `total_outputs`.
         results: List[dict] = []
+        num_images = len(images)
         out_index = 0
-        for img in images:
-            for r in range(repeat_per_image):
-                if out_index >= total_outputs:
-                    break
-                # Use the seed image URL so OpenRouter provider can perform image-to-image; local provider
-                # will ignore bytes and return a deterministic image of default size.
+        while out_index < total_outputs:
+            # Cycle through seed images
+            img = images[(out_index // repeat_per_image) % num_images]
+            # Use the seed image URL so OpenRouter provider can perform image-to-image; local provider
+            # will ignore bytes and return a deterministic image of default size.
+            try:
                 gen = self.provider.generate_from_seed_url(img.s3_url, prompt, style)
-                record_id = f"{record_prefix}-{out_index}"
-                _, url = self.storage.save_generated(tenant_id, job_id or "batch", record_id, field_name, gen.content)
-                results.append({
-                    "source_image_id": img.id,
-                    "index": out_index,
-                    "url": url,
-                    "content_type": gen.content_type,
-                    "w": gen.width,
-                    "h": gen.height,
-                })
-                out_index += 1
-                if out_index >= total_outputs:
-                    break
-            if out_index >= total_outputs:
-                break
+            except Exception:
+                # Fallback: local deterministic generator using width/height or defaults
+                self.logger.warning(
+                    f"Provider failed for seed image {img.id} ({img.s3_url}); falling back to local generator"
+                )
+                local = LocalSeedImageProvider()
+                w = img.width or 512
+                h = img.height or 512
+                gen = local.generate_from_seed(w, h, prompt, style)
+            record_id = f"{record_prefix}-{out_index}"
+            _, url = self.storage.save_generated(tenant_id, job_id or "batch", record_id, field_name, gen.content)
+            results.append({
+                "source_image_id": img.id,
+                "index": out_index,
+                "url": url,
+                "content_type": gen.content_type,
+                "w": gen.width,
+                "h": gen.height,
+            })
+            out_index += 1
         return results
