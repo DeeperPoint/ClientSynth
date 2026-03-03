@@ -44,6 +44,10 @@ class LocalSeedImageProvider(BaseImageProvider):
             with open(path, "rb") as f:
                 data = f.read()
             return data, "image/png"
+        # local:// placeholder from seed ZIP uploads -- no real file on disk;
+        # return empty bytes so the caller falls back to generate_from_seed()
+        if seed_ref.startswith("local://"):
+            raise FileNotFoundError(f"local:// seed reference has no backing file: {seed_ref}")
         # Local filesystem path
         if os.path.exists(seed_ref):
             with open(seed_ref, "rb") as f:
@@ -111,6 +115,9 @@ class OpenRouterImageProvider(BaseImageProvider):
             with open(path, "rb") as f:
                 data = f.read()
             return data, "image/png"
+        # local:// placeholder from seed ZIP uploads -- no real file on disk
+        if seed_ref.startswith("local://"):
+            raise FileNotFoundError(f"local:// seed reference has no backing file: {seed_ref}")
         # Local filesystem path
         if os.path.exists(seed_ref):
             with open(seed_ref, "rb") as f:
