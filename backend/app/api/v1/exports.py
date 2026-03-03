@@ -74,6 +74,25 @@ def create_export(payload: ExportCreate, user: User = Depends(get_current_user),
     return {"id": exp.id, "status": exp.status, "path": path}
 
 
+# NOTE: /recent MUST be declared before /{export_id} to avoid FastAPI
+# matching the literal string "recent" as an export_id path parameter.
+@router.get("/recent", response_model=List[dict])
+def recent_exports(tenant_id: str, limit: int = 10, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _assert_tenant_access(db, user.id, tenant_id)
+    q = db.query(Export).filter(Export.tenant_id == tenant_id).order_by(Export.created_at.desc()).limit(max(1, min(limit, 50)))
+    results = []
+    for e in q.all():
+        results.append({
+            "id": e.id,
+            "name": e.name,
+            "format": e.format,
+            "status": e.status,
+            "file_size": e.file_size,
+            "created_at": getattr(e, "created_at", None),
+        })
+    return results
+
+
 @router.get("/{export_id}", response_model=dict)
 def get_export(export_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     exp = db.get(Export, export_id)
@@ -92,23 +111,6 @@ def get_export(export_id: str, user: User = Depends(get_current_user), db: Sessi
         "filters": exp.filters,
         "created_at": getattr(exp, "created_at", None),
     }
-
-
-@router.get("/recent", response_model=List[dict])
-def recent_exports(tenant_id: str, limit: int = 10, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    _assert_tenant_access(db, user.id, tenant_id)
-    q = db.query(Export).filter(Export.tenant_id == tenant_id).order_by(Export.created_at.desc()).limit(max(1, min(limit, 50)))
-    results = []
-    for e in q.all():
-        results.append({
-            "id": e.id,
-            "name": e.name,
-            "format": e.format,
-            "status": e.status,
-            "file_size": e.file_size,
-            "created_at": getattr(e, "created_at", None),
-        })
-    return results
 
 
 @router.get("/{export_id}/download")
@@ -151,5 +153,3 @@ def delete_export(export_id: str, user: User = Depends(get_current_user), db: Se
     db.delete(exp)
     db.commit()
     return {"deleted": True, "id": export_id}
-
-
