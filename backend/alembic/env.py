@@ -26,6 +26,7 @@ from app.models import schema as _schema  # noqa: F401, E402
 from app.models import jobs as _jobs  # noqa: F401, E402
 from app.models import exports as _exports  # noqa: F401, E402
 from app.models import seeds as _seeds  # noqa: F401, E402
+from app.models import documents as _documents  # noqa: F401, E402
 
 target_metadata = Base.metadata
 

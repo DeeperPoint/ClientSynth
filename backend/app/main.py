@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.api.v1.schemas import router as schemas_router
 from app.api.v1.seeds import router as seeds_router
 from app.api.v1.images import router as images_router
+from app.api.v1.documents import router as documents_router
 from app.api.v1.jobs import router as jobs_router
 from app.api.v1.exports import router as exports_router
 from app.api.v1.tenants import router as tenants_router
@@ -49,6 +50,7 @@ app.include_router(auth_router)
 app.include_router(schemas_router)
 app.include_router(seeds_router)
 app.include_router(images_router)
+app.include_router(documents_router)
 app.include_router(jobs_router)
 app.include_router(exports_router)
 app.include_router(tenants_router)
