@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -8,10 +8,12 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Plus, Trash2, GripVertical, ImageIcon, Pointer as Spinner, FileText } from "lucide-react"
+import { Plus, Trash2, GripVertical, ImageIcon, Pointer as Spinner, FileText, ChevronDown } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty"
 import { ExampleFileUpload } from "@/components/example-file-upload"
+import { LinkedFieldConfig } from "@/lib/types/schema-extensions"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 
 interface SchemaField {
   id: string
@@ -25,6 +27,7 @@ interface SchemaField {
     options?: string[]
     format?: string
   }
+  linkedFieldConfig?: LinkedFieldConfig
 }
 
 interface SchemaDefinition {
@@ -59,6 +62,8 @@ const FIELD_TYPES = [
 export function SchemaBuilder() {
   const [schemaName, setSchemaName] = useState("")
   const [schemaDescription, setSchemaDescription] = useState("")
+  const [participantType, setParticipantType] = useState<string>("")
+  const [participantTypes, setParticipantTypes] = useState<Array<{name: string, display_name: string, description?: string}>>([])
   const [fields, setFields] = useState<SchemaField[]>([])
   const [isSaving, setIsSaving] = useState(false)
   const [createdSchemaId, setCreatedSchemaId] = useState<string | null>(null)
@@ -68,8 +73,25 @@ export function SchemaBuilder() {
     failedFiles: number
     results: Array<{ fileName: string; status: 'success' | 'failed'; recordCount?: number }>
   } | null>(null)
+  const [expandedLinkedFields, setExpandedLinkedFields] = useState<Set<string>>(new Set())
   const router = useRouter()
   // Use server APIs for auth and DB (Postgres)
+
+  // Load participant types on mount
+  useEffect(() => {
+    const loadParticipantTypes = async () => {
+      try {
+        const res = await fetch('/api/participant-types')
+        if (res.ok) {
+          const data = await res.json()
+          setParticipantTypes(data.participantTypes || [])
+        }
+      } catch (error) {
+        console.error('Failed to load participant types:', error)
+      }
+    }
+    loadParticipantTypes()
+  }, [])
 
   const addField = () => {
     const newField: SchemaField = {
@@ -149,6 +171,7 @@ export function SchemaBuilder() {
           data: {
             name: schemaName.trim(),
             description: schemaDescription.trim(),
+            participant_type: participantType || null,
             schema_definition: schemaDefinition,
             created_by: meJson.data.user.id,
             tenant_id: tenantId,
@@ -284,6 +307,32 @@ export function SchemaBuilder() {
             />
             <p id="schema-description-hint" className="text-sm text-muted-foreground">
               Optional: Provide context about how this schema will be used
+            </p>
+          </div>
+
+          <div className="grid gap-3">
+            <Label htmlFor="participant-type" className="text-base font-medium">
+              Market Participant Type
+            </Label>
+            <Select value={participantType || undefined} onValueChange={(value) => setParticipantType(value || "")}>
+              <SelectTrigger id="participant-type">
+                <SelectValue placeholder="Select participant type (optional)" />
+              </SelectTrigger>
+              <SelectContent>
+                {participantTypes.map((type) => (
+                  <SelectItem key={type.name} value={type.name}>
+                    <div>
+                      <div className="font-medium">{type.display_name}</div>
+                      {type.description && (
+                        <div className="text-xs text-muted-foreground">{type.description}</div>
+                      )}
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-sm text-muted-foreground">
+              Optional: Categorize this schema by market participant type (e.g., Producer, Buyer, Logistics Provider)
             </p>
           </div>
         </CardContent>
@@ -515,6 +564,90 @@ export function SchemaBuilder() {
                           </Button>
                         </div>
                       </div>
+                    </div>
+                    
+                    {/* Linked Fields Configuration */}
+                    <div className="w-full mt-4">
+                      <Collapsible
+                        open={expandedLinkedFields.has(field.id)}
+                        onOpenChange={(open) => {
+                          const newSet = new Set(expandedLinkedFields)
+                          if (open) {
+                            newSet.add(field.id)
+                          } else {
+                            newSet.delete(field.id)
+                          }
+                          setExpandedLinkedFields(newSet)
+                        }}
+                      >
+                        <CollapsibleTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full justify-between"
+                            type="button"
+                          >
+                            <span className="text-sm">Linked Field Configuration (Optional)</span>
+                            <ChevronDown className={`h-4 w-4 transition-transform ${expandedLinkedFields.has(field.id) ? 'rotate-180' : ''}`} />
+                          </Button>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="mt-3 space-y-3 p-4 border rounded-md bg-muted/30">
+                          <div className="grid gap-3">
+                            <Label htmlFor={`linked-depends-on-${field.id}`} className="text-sm">
+                              Depends On Field
+                            </Label>
+                            <Select
+                              value={field.linkedFieldConfig?.dependsOn || undefined}
+                              onValueChange={(value) => {
+                                updateField(field.id, {
+                                  linkedFieldConfig: value ? {
+                                    dependsOn: value,
+                                    strict: field.linkedFieldConfig?.strict || false
+                                  } : undefined
+                                })
+                              }}
+                            >
+                              <SelectTrigger id={`linked-depends-on-${field.id}`}>
+                                <SelectValue placeholder="Select field this depends on (optional)" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {fields.filter(f => f.id !== field.id && f.name).map((f) => (
+                                  <SelectItem key={f.id} value={f.name}>
+                                    {f.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <p className="text-xs text-muted-foreground">
+                              Link this field to another field (e.g., email domain depends on company name)
+                            </p>
+                          </div>
+                          
+                          {field.linkedFieldConfig?.dependsOn && (
+                            <div className="grid gap-3">
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  id={`linked-strict-${field.id}`}
+                                  checked={field.linkedFieldConfig?.strict || false}
+                                  onChange={(e) => {
+                                    updateField(field.id, {
+                                      linkedFieldConfig: {
+                                        ...field.linkedFieldConfig!,
+                                        strict: e.target.checked
+                                      }
+                                    })
+                                  }}
+                                  className="h-4 w-4"
+                                />
+                                <Label htmlFor={`linked-strict-${field.id}`} className="text-sm cursor-pointer">
+                                  Strict dependency (must match)
+                                </Label>
+                              </div>
+                            </div>
+                          )}
+                        </CollapsibleContent>
+                      </Collapsible>
                     </div>
                   </div>
                 )

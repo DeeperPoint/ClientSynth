@@ -77,7 +77,7 @@ export class AIGenerator {
     return this.model
   }
 
-  async generateFieldValue(context: GenerationContext, retryAttempt: number = 0): Promise<string> {
+  async generateFieldValue(context: GenerationContext, retryAttempt: number = 0, useStructuredOutput: boolean = true): Promise<string> {
     // Fetch example data if schemaId is provided
     let exampleData = context.exampleData
     if (!exampleData && context.schemaId) {
@@ -97,7 +97,41 @@ export class AIGenerator {
     // Use context temperature if provided, otherwise calculate from retry attempt
     const temperature = context.temperature ?? (0.9 + (retryAttempt * 0.15)) // 0.9, 1.05, 1.2, 1.35 for retries
 
-    console.log(`[AIGenerator] Generating with OpenRouter: ${this.model} (max_tokens: ${maxTokens}, temperature: ${temperature})`)
+    console.log(`[AIGenerator] Generating with OpenRouter: ${this.model} (max_tokens: ${maxTokens}, temperature: ${temperature}, structured_output: ${useStructuredOutput})`)
+
+    // Build user message content (add JSON instruction if not using structured output)
+    const userContent = useStructuredOutput 
+      ? prompt 
+      : `${prompt}\n\nPlease respond with a JSON object in this format: {"value": "your generated value here"}`
+
+    const requestBody: any = {
+      model: this.model,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: userContent },
+      ],
+      max_tokens: maxTokens,
+      temperature: Math.min(temperature, 1.5), // Cap at 1.5 for most models
+    }
+
+    // Only use structured output if enabled (some models don't support it well)
+    if (useStructuredOutput) {
+      requestBody.response_format = {
+        type: "json_schema",
+        json_schema: {
+          name: "field_value",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              value: { type: "string" },
+            },
+            required: ["value"],
+            additionalProperties: false,
+          },
+        },
+      }
+    }
 
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -107,30 +141,7 @@ export class AIGenerator {
         "HTTP-Referer": process.env.OPENROUTER_SITE_URL || "http://localhost:3000",
         "X-Title": process.env.OPENROUTER_APP_TITLE || "ClientSynth",
       },
-      body: JSON.stringify({
-        model: this.model,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: prompt },
-        ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "field_value",
-            strict: true,
-            schema: {
-              type: "object",
-              properties: {
-                value: { type: "string" },
-              },
-              required: ["value"],
-              additionalProperties: false,
-            },
-          },
-        },
-        max_tokens: maxTokens,
-        temperature: Math.min(temperature, 1.5), // Cap at 1.5 for most models
-      }),
+      body: JSON.stringify(requestBody),
     })
 
     if (!response.ok) {
@@ -141,12 +152,40 @@ export class AIGenerator {
 
     const data = await response.json()
 
+    // Log full response structure for debugging when content is missing
     if (!data.choices || !data.choices[0] || !data.choices[0].message) {
       console.error("[AIGenerator] Invalid response structure:", JSON.stringify(data, null, 2))
       throw new Error("Invalid response from OpenRouter API: missing choices or message")
     }
 
-    const content = data.choices[0].message.content.trim()
+    const message = data.choices[0].message
+    const content = message.content?.trim() || ''
+    
+    // Log content length for debugging
+    if (!content || content.length === 0) {
+      console.error(`[AIGenerator] Empty response content from API`)
+      console.error(`[AIGenerator] Full response data:`, JSON.stringify(data, null, 2))
+      console.error(`[AIGenerator] Message object:`, JSON.stringify(message, null, 2))
+      
+      // Check if there's a finish_reason that might explain the empty content
+      const finishReason = data.choices[0]?.finish_reason
+      if (finishReason) {
+        console.error(`[AIGenerator] Finish reason: ${finishReason}`)
+        if (finishReason === 'length' || finishReason === 'content_filter') {
+          throw new Error(`OpenRouter API returned empty content due to ${finishReason}. Try increasing max_tokens or checking content filters.`)
+        }
+      }
+      
+      // If we were using structured output and got empty content, retry without it
+      if (useStructuredOutput && retryAttempt < 2) {
+        console.warn(`[AIGenerator] Empty content with structured output, retrying without structured output...`)
+        return await this.generateFieldValue(context, retryAttempt + 1, false)
+      }
+      
+      throw new Error(`Empty response from OpenRouter API`)
+    }
+    
+    console.log(`[AIGenerator] Received response (${content.length} chars): ${content.substring(0, 100)}${content.length > 100 ? '...' : ''}`)
     
     // Clean up any JSON artifacts or error messages
     let cleanedContent = content
@@ -218,12 +257,24 @@ export class AIGenerator {
     } catch (e) {
       // If JSON parsing fails, try to extract value from text
       console.warn(`[AIGenerator] JSON parse failed, attempting text extraction: ${e}`)
+      console.warn(`[AIGenerator] Content that failed to parse (${cleanedContent.length} chars): ${cleanedContent.substring(0, 200)}${cleanedContent.length > 200 ? '...' : ''}`)
       
-      // Try to extract JSON-like content
+      // Try to extract JSON-like content (even if incomplete)
       const jsonMatch = cleanedContent.match(/\{[\s\S]*"value"[\s\S]*:[\s\S]*"([^"]+)"[\s\S]*\}/)
       if (jsonMatch && jsonMatch[1]) {
         const extracted = this.cleanValue(jsonMatch[1])
         if (extracted && extracted.trim().length > 0) {
+          console.log(`[AIGenerator] Extracted value from incomplete JSON: ${extracted}`)
+          return extracted.trim()
+        }
+      }
+      
+      // Try to find any quoted string value (even in incomplete JSON)
+      const quotedMatch = cleanedContent.match(/"value"\s*:\s*"([^"]*)"/)
+      if (quotedMatch && quotedMatch[1]) {
+        const extracted = this.cleanValue(quotedMatch[1])
+        if (extracted && extracted.trim().length > 0) {
+          console.log(`[AIGenerator] Extracted value from quoted string: ${extracted}`)
           return extracted.trim()
         }
       }
@@ -241,7 +292,7 @@ export class AIGenerator {
         return await this.generateFieldValue(context, retryAttempt + 1)
       }
       
-      throw new Error(`Failed to parse AI response for field ${context.fieldName}: ${cleanedContent}`)
+      throw new Error(`Failed to parse AI response for field ${context.fieldName}. Content: ${cleanedContent.substring(0, 100)}`)
     }
   }
 
