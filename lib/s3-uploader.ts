@@ -18,15 +18,21 @@ export class S3Uploader {
   private bucketName: string
 
   constructor() {
+    // Use us-east-2 region (bucket location) or fallback to environment variable
+    // The bucket 'synthetic-client-assets-1761171658' is in us-east-2
+    const region = process.env.AWS_REGION || "us-east-2"
+    
     this.s3Client = new S3Client({
-      region: process.env.AWS_REGION!,
+      region: region,
       credentials: {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
       },
+      // Force path-style addressing for better compatibility
+      forcePathStyle: false,
     })
     this.bucketName = process.env.AWS_S3_BUCKET!
-    console.log(`[S3Uploader] ✓ Initialized with bucket: ${this.bucketName}, region: ${process.env.AWS_REGION}`)
+    console.log(`[S3Uploader] ✓ Initialized with bucket: ${this.bucketName}, region: ${region}`)
   }
 
   async uploadImage(
@@ -70,7 +76,7 @@ export class S3Uploader {
 
       await this.s3Client.send(command)
 
-      // Generate public URL without region for better compatibility
+      // Generate public URL using the standard format (works across all regions)
       const publicUrl = `https://${this.bucketName}.s3.amazonaws.com/${key}`
 
       console.log(`[S3Uploader] Successfully uploaded image: ${key}`)
@@ -178,7 +184,7 @@ export class S3Uploader {
 
       await this.s3Client.send(command)
 
-      // Generate public URL without region for better compatibility
+      // Generate public URL using the standard format (works across all regions)
       const publicUrl = `https://${this.bucketName}.s3.amazonaws.com/${key}`
 
       console.log(`[S3Uploader] Successfully uploaded file: ${key}`)
@@ -238,13 +244,13 @@ export class S3Uploader {
 
       await this.s3Client.send(command)
 
-      const region = process.env.AWS_REGION || "us-east-1"
+      // Use standard S3 URL format (works across all regions)
       const url = `https://${this.bucketName}.s3.amazonaws.com/${key}`
       return { url, s3Key: key }
     } catch (error) {
       console.error("[S3Uploader] uploadBuffer failed:", error)
       if (process.env.MOCK_S3 === 'true' || process.env.NODE_ENV !== 'production') {
-        const region = process.env.AWS_REGION || "us-east-1"
+        // Use standard S3 URL format (works across all regions)
         const url = `https://${this.bucketName || 'mock-bucket'}.s3.amazonaws.com/${key}`
         console.warn("[S3Uploader] Returning mocked S3 URL (dev mode)")
         return { url, s3Key: key }

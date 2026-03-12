@@ -4,8 +4,8 @@
  */
 
 export const AWS_CONFIG = {
-  // Default region
-  defaultRegion: "us-east-1",
+  // Default region (us-east-2 for synthetic-client-assets bucket)
+  defaultRegion: "us-east-2",
 
   // S3 bucket defaults
   s3: {

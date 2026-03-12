@@ -17,7 +17,8 @@ export class S3Client {
 
   constructor() {
     this.bucket = process.env.AWS_S3_BUCKET || "client-synth-media"
-    this.region = process.env.AWS_REGION || "us-east-1"
+    // Default to us-east-2 for the synthetic-client-assets bucket, or use environment variable
+    this.region = process.env.AWS_REGION || "us-east-2"
     this.accessKeyId = process.env.AWS_ACCESS_KEY_ID!
     this.secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY!
 

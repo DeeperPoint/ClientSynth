@@ -17,9 +17,10 @@ import {
   CheckCircle,
   Clock,
   Zap,
+  Sparkles,
 } from "lucide-react"
 import Link from "next/link"
-import { useParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 import { formatDistanceToNow } from "date-fns"
 import { useToast } from "@/hooks/use-toast"
 
@@ -86,6 +87,12 @@ export default function JobDetailPage() {
   const logsEndRef = useRef<HTMLDivElement>(null)
   const { toast } = useToast()
   const [isTriggering, setIsTriggering] = useState(false)
+  
+  // Extract persona context from logs
+  const personaContext = logs.find(log => 
+    log.message.includes("Persona context generated") && 
+    log.metadata?.personaContext
+  )?.metadata?.personaContext
 
   const formatRelativeSafe = (iso?: string) => {
     if (!iso) return "—"
@@ -95,6 +102,7 @@ export default function JobDetailPage() {
   }
 
   const params = useParams()
+  const router = useRouter()
   // Use Postgres-backed API endpoints
 
   useEffect(() => {
@@ -498,11 +506,9 @@ export default function JobDetailPage() {
     <div className="max-w-7xl mx-auto p-6">
       <div className="mb-8">
         <div className="flex items-center gap-4 mb-4">
-          <Button variant="ghost" size="sm" asChild>
-            <Link href="/dashboard/jobs">
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to Jobs
-            </Link>
+          <Button variant="ghost" size="sm" onClick={() => router.push("/dashboard/jobs")}>
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Jobs
           </Button>
           <Button variant="ghost" size="sm" onClick={refreshData} disabled={isRefreshing}>
             <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
@@ -695,6 +701,44 @@ export default function JobDetailPage() {
         </div>
 
         <div className="space-y-6">
+          {/* Persona Context Display */}
+          {personaContext && (
+            <Card className="glass-effect shadow-soft border-primary/20 bg-gradient-to-br from-primary/5 to-accent/5">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-foreground">
+                  <Sparkles className="h-5 w-5 text-primary" />
+                  Persona Context
+                </CardTitle>
+                <CardDescription>
+                  AI-generated context ensuring consistent data generation across all records
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {Object.entries(personaContext).map(([key, value]) => (
+                      <div key={key} className="bg-card/50 border border-primary/10 rounded-lg p-3">
+                        <div className="text-xs font-semibold text-muted-foreground mb-1 uppercase tracking-wide">
+                          {key.replace(/([A-Z])/g, ' $1').trim()}
+                        </div>
+                        <div className="text-sm text-foreground font-medium">
+                          {typeof value === 'object' && value !== null ? (
+                            <pre className="text-xs whitespace-pre-wrap">{JSON.stringify(value, null, 2)}</pre>
+                          ) : (
+                            String(value)
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-2 pt-2 border-t border-primary/10">
+                    This persona context is used to generate consistent, realistic data across all {job?.total_records || 0} records.
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+          
           <Card className="glass-effect shadow-soft">
             <CardHeader>
               <CardTitle className="text-foreground">Job Details</CardTitle>
