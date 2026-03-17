@@ -102,7 +102,7 @@ OPENROUTER_API_KEY=your_openrouter_key
 
 1. **Cleanup**: All tests clean up their test data after completion
 2. **Isolation**: Tests are isolated and don't depend on each other
-3. **Real Services**: Integration tests use real services (Supabase, S3, Google AI)
+3. **Real Services**: Integration tests use real services (PostgreSQL, S3, Google AI)
 4. **Mocking**: Only mock when necessary to avoid flaky tests
 5. **Assertions**: Use specific assertions to catch regressions
 
@@ -114,7 +114,7 @@ OPENROUTER_API_KEY=your_openrouter_key
 - Increase timeout in jest.config.js
 
 ### Database Errors
-- Ensure Supabase is accessible
+- Ensure PostgreSQL is accessible
 - Check service role key permissions
 - Verify database schema is up to date
 

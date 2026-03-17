@@ -21,20 +21,20 @@ Client Synth is a comprehensive, multi-tenant SaaS platform for generating reali
 - **Language**: TypeScript
 - **Styling**: Tailwind CSS v4 with custom design system
 - **UI Components**: Radix UI primitives with shadcn/ui
-- **Authentication**: Supabase Auth with server/client components
-- **State Management**: React hooks with Supabase real-time subscriptions
+- **Authentication**: Custom JWT Auth with native sessions
+- **State Management**: React hooks with native WebSockets/Polling (future)
 
 ### Backend
 - **Runtime**: Next.js API Routes (server-side)
-- **Database**: Supabase PostgreSQL with Row Level Security (RLS)
-- **Authentication**: Supabase Auth with middleware session management
+- **Database**: PostgreSQL with Row Level Security (RLS)
+- **Authentication**: Custom JWT Auth with middleware session management
 - **AI Services**: OpenRouter for text generation, Fal for image generation
 - **File Storage**: AWS S3 integration for media files
 - **Job Processing**: Custom job processor with retry logic and recovery states
 
 ### Infrastructure
 - **Deployment**: Vercel (Next.js optimized)
-- **Database**: Supabase (PostgreSQL with real-time capabilities)
+- **Database**: Standalone PostgreSQL
 - **Storage**: AWS S3 for generated images and exports
 - **AI Providers**: OpenRouter (text), Fal (images)
 - **Environment**: Environment variables managed through Vercel
@@ -44,7 +44,7 @@ Client Synth is a comprehensive, multi-tenant SaaS platform for generating reali
 \`\`\`
 ├── app/                          # Next.js App Router
 │   ├── auth/                     # Authentication pages
-│   │   ├── login/page.tsx        # Login form with Supabase Auth
+│   │   ├── login/page.tsx        # Login form with custom authentication
 │   │   ├── sign-up/page.tsx      # Registration with email confirmation
 │   │   └── sign-up-success/page.tsx # Email confirmation landing
 │   ├── dashboard/                # Protected dashboard area
@@ -82,7 +82,7 @@ Client Synth is a comprehensive, multi-tenant SaaS platform for generating reali
 │   ├── schema-editor.tsx         # Schema editing interface
 │   └── image-gallery.tsx         # AI-generated image management
 ├── lib/                          # Utility libraries
-│   ├── supabase/                 # Supabase client configuration
+│   ├── postgres/                 # Database client configuration
 │   │   ├── client.ts             # Browser client
 │   │   ├── server.ts             # Server client
 │   │   └── middleware.ts         # Session management middleware
@@ -179,7 +179,7 @@ Multi-provider image generation system:
 
 ## Authentication & Security
 
-### Supabase Authentication
+### Authentication System
 - **Email/Password**: Standard authentication with email confirmation
 - **Session Management**: Server-side session handling with middleware
 - **Protected Routes**: Automatic redirect for unauthenticated users
@@ -220,10 +220,10 @@ Real-time job management interface:
 
 ### Required Environment Variables
 \`\`\`bash
-# Supabase Configuration
+# Database Configuration
 POSTGRES_URL=postgres://user:password@localhost:5432/db
 
-# Database (Auto-configured by Supabase)
+# Database (Self-hosted PostgreSQL)
 POSTGRES_URL=your_postgres_url
 POSTGRES_PRISMA_URL=your_postgres_prisma_url
 POSTGRES_URL_NON_POOLING=your_postgres_non_pooling_url
@@ -247,7 +247,7 @@ NEXT_PUBLIC_SITE_URL=your_site_url
 
 ### Prerequisites
 - Node.js 18+ and npm/yarn
-- Supabase account and project
+- Running PostgreSQL instance
 - OpenRouter API key
 - AWS S3 bucket (for image storage)
 - Fal API key (optional, for AI images)
@@ -328,10 +328,10 @@ The application is optimized for Vercel deployment with:
 - **Analytics**: Built-in performance monitoring
 
 ### Production Considerations
-- **Database Scaling**: Supabase handles database scaling automatically
+- **Database Scaling**: Managed via PostgreSQL hosting (e.g. AWS RDS/Render)
 - **File Storage**: AWS S3 for reliable file storage and CDN
 - **Monitoring**: Comprehensive logging and error tracking
-- **Backup Strategy**: Regular database backups through Supabase
+- **Backup Strategy**: Regular database backups via PostgreSQL hosting provider
 
 ## Contributing
 

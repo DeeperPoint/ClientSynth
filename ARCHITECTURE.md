@@ -962,7 +962,7 @@ Layer 5: Application Security
 │ - Vercel    │  │ - Images    │  │ - Text Gen  │
 │   Postgres  │  │ - PDFs      │  │ - Image Gen │
 │ - or        │  │ - Examples  │  │             │
-│   Supabase  │  │             │  │             │
+│  PostgreSQL │  │             │  │             │
 │ - or        │  │             │  │             │
 │   AWS RDS   │  │             │  │             │
 └─────────────┘  └─────────────┘  └─────────────┘
