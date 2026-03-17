@@ -178,7 +178,7 @@ npm run test:watch
 3. **Clean up after tests**
    \`\`\`typescript
    afterEach(async () => {
-     await supabase.from("jobs").delete().eq("id", testJobId)
+     await query("DELETE FROM jobs WHERE id = $1", [testJobId])
    })
    \`\`\`
 
@@ -193,7 +193,7 @@ npm run test:watch
 
 1. Check the verbose logs with `[v0]` prefix
 2. Verify environment variables are set correctly
-3. Check Supabase database state
+3. Check PostgreSQL database state
 4. Verify S3 bucket permissions
 5. Check API key validity and quotas
 
@@ -228,7 +228,7 @@ jobs:
 - Verify API endpoints are accessible
 
 **Database connection errors**
-- Verify Supabase credentials
+- Verify PostgreSQL credentials
 - Check RLS policies
 - Ensure service role key has proper permissions
 
