@@ -1360,7 +1360,7 @@ Get dashboard statistics.
 
 ### JWT-Based Authentication
 
-Client Synth uses custom JWT authentication (migrated from Supabase).
+Client Synth uses custom JWT authentication.
 
 #### Authentication Flow
 
@@ -2031,7 +2031,7 @@ NEXT_PUBLIC_SITE_URL=https://your-domain.com
    - Built-in connection pooling
    - Easy Vercel integration
 
-2. **Supabase**
+2. **PostgreSQL**
    - Managed PostgreSQL
    - Built-in RLS support
    - Real-time capabilities
@@ -3062,7 +3062,7 @@ console.log('[DEBUG]', { state, props, data });
 
 #### Changed
 - Migrated from Supabase to standalone PostgreSQL
-- Updated authentication from Supabase Auth to custom JWT
+- Updated authentication from Custom JWT Auth to custom JWT
 - Enhanced job processor with retry logic
 - Improved error handling and logging
 
