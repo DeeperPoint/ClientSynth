@@ -18,8 +18,8 @@ ClientSynth is a **multi-tenant SaaS platform for generating realistic synthetic
 | --------------- | --------------------------- | --------------------------------------------------- |
 | **Framework**   | Next.js 14 (App Router)     | Full-stack: React frontend + API routes as backend  |
 | **Language**    | TypeScript                  | Strict typing enabled                               |
-| **Database**    | PostgreSQL via Supabase     | RLS for multi-tenant isolation                      |
-| **Auth**        | Supabase Auth               | Email/password + session management via middleware  |
+| **Database**    | Standard PostgreSQL     | RLS for multi-tenant isolation                      |
+| **Auth**        | Custom JWT Auth               | Email/password + session management via middleware  |
 | **AI (text)**   | OpenRouter                  | Model-flexible (Gemini, GPT, Claude via OpenRouter) |
 | **AI (images)** | Fal                         | Multi-provider architecture with fallbacks          |
 | **Storage**     | AWS S3                      | Generated images, PDFs, exports                     |
@@ -107,7 +107,7 @@ ClientSynth is a **multi-tenant SaaS platform for generating realistic synthetic
 | 013       | Seeding infrastructure                                                                         |
 | 014       | Google Drive integration                                                                       |
 | 015       | Intelligence layer (quality, metrics, recommendations, ML states)                              |
-| 016       | PostgreSQL migration (from Supabase-specific patterns)                                         |
+| 016       | PostgreSQL migration (from legacy patterns)                                         |
 | 017       | Example files system                                                                           |
 | 018 (×3)  | AI labeling, bulk upload, PDF templates (three parallel migrations, numbering conflict)        |
 | 019       | Parsing metadata                                                                               |
@@ -320,7 +320,7 @@ These items enable the simulation capabilities described in the whitepaper:
 ### Areas to Watch
 
 1. **No queue infrastructure.** Job processing happens in API route handlers, not in a dedicated worker process. For high-volume production use, this will need a proper job queue (BullMQ, or a dedicated worker service).
-2. **Supabase dependency.** Auth and some database patterns are Supabase-specific. Migration 016 began moving toward standard PostgreSQL, but auth still depends on Supabase. If you want to self-host or use a different auth provider, this needs attention.
+2. **Authentication is fully migrated to custom JWTs.
 3. **Python services embedded in a TypeScript project.** `pdf_parser.py`, `pdf_service.py`, and `docx_parser.py` are Python files in a Next.js project. These work but create deployment complexity (need Python runtime alongside Node).
 4. **Migration numbering conflict.** Three files share the `018_` prefix. This will cause issues with any automated migration runner.
 5. **No API documentation.** The API routes exist but there's no OpenAPI spec or Swagger documentation. For external integration (including Cosolvent), this is essential.
