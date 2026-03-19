@@ -130,4 +130,58 @@ export interface PersonaContext {
   [key: string]: any
 }
 
+/**
+ * Advanced Seed Rules for Knowledge Slot Integration
+ * 
+ * Rules define complex dependencies, constraints, and conditional logic
+ * applied during data generation to ensure domain consistency.
+ */
+export type RuleType = 'dependency' | 'exclusion' | 'conditional_enum' | 'range_constraint'
+
+export interface SeedRule {
+  id: string
+  name?: string
+  type: RuleType
+  
+  /**
+   * Field that triggers this rule
+   */
+  sourceField: string
+  
+  /**
+   * Field(s) impacted by this rule
+   */
+  targetFields: string[]
+  
+  /**
+   * Rule-specific configuration
+   * E.g., for 'dependency': { "Value A": ["Option 1", "Option 2"] }
+   */
+  config: Record<string, any>
+  
+  /**
+   * Error message or guidance when rule is violated
+   */
+  description?: string
+  
+  /**
+   * Severity level
+   */
+  severity?: 'error' | 'warning'
+}
+
+/**
+ * Enhanced Schema Definition representing the full Knowledge Slot contract
+ */
+export interface KnowledgeSchemaDefinition {
+  fields: ExtendedSchemaField[]
+  seed_rules?: SeedRule[]
+  metadata?: {
+    version: string
+    source?: string
+    imported_at?: string
+    [key: string]: any
+  }
+}
+
 
