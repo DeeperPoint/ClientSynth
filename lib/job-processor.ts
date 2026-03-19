@@ -255,7 +255,7 @@ export class JobProcessor {
       if (this.isCancelled || this.isPaused) break
 
       try {
-        const record = await this.generateSingleRecord(fields, recordIndex, this.currentJob)
+        const record = await this.generateSingleRecord(fields, recordIndex, this.currentJob, this.currentJob.job_id)
 
         await query(`
           INSERT INTO generated_data (job_id, tenant_id, record_data, record_index, created_at)
@@ -821,6 +821,7 @@ export class JobProcessor {
               tenantContext: job.tenant_id,
               schemaId: job.schema_id,
               personaContext: this.jobPersonaContext.get(job.job_id), // Task 3: Add persona context
+              seedRules: job.schema_definition.seed_rules, // Knowledge Slot rules (CS-103)
             }
             
             // Pass previously generated values for uniqueness
@@ -890,6 +891,7 @@ export class JobProcessor {
               tenantContext: job.tenant_id,
               schemaId: job.schema_id,
               personaContext: this.jobPersonaContext.get(job.job_id), // Task 3: Add persona context
+              seedRules: job.schema_definition.seed_rules, // Knowledge Slot rules (CS-103)
             }
 
             if (this.shouldUseAI(field.type)) {
@@ -946,6 +948,21 @@ export class JobProcessor {
               }
               
               console.log(`[v0] AI generated for ${field.name}:`, fieldValue)
+
+              // Post-generation validation against Knowledge Slot rules (CS-102/103)
+              if (job.schema_definition.seed_rules && job.schema_definition.seed_rules.length > 0) {
+                const { RuleValidator } = await import("./validation/rule-validator")
+                const validationIssues = RuleValidator.validate(
+                  { ...record, [field.name]: fieldValue },
+                  job.schema_definition.seed_rules
+                )
+                
+                if (validationIssues.some(issue => issue.severity === 'error' && issue.field === field.name)) {
+                  const errorIssue = validationIssues.find(issue => issue.severity === 'error' && issue.field === field.name)
+                  console.warn(`[v0] AI output violated Knowledge Slot rule: ${errorIssue?.message}`)
+                  throw new Error(`Knowledge Slot Rule Violation: ${errorIssue?.message}`)
+                }
+              }
             } else {
               console.log(`[v0] Using fallback generation for field: ${field.name}`)
               fieldValue = await this.generateFieldValue(field, recordIndex, existingValues)
