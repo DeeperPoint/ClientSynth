@@ -12,6 +12,7 @@ export interface GenerationContext {
   previouslyGeneratedValues?: string[] // Values to avoid for uniqueness
   temperature?: number // Optional temperature override for generation
   personaContext?: PersonaContext // Persona context for consistent generation
+  seedRules?: import("./types/schema-extensions").SeedRule[] // Knowledge Slot rules
 }
 
 export interface PDFGenerationContext extends GenerationContext {
@@ -398,6 +399,11 @@ IMPORTANT:
 3. ALWAYS ensure values are unique and different from previous generations
 4. ALWAYS return valid, realistic data appropriate for the field type
 5. Return ONLY a JSON object with a "value" field containing the clean value`
+
+    if (context.seedRules && context.seedRules.length > 0) {
+      basePrompt += `\n\nDOMAIN CONSTRAINTS (Knowledge Slot):
+      You must strictly adhere to the following logic and dependencies provided by the domain experts. Do not invent values that contradict these rules.`
+    }
     
     return basePrompt
   }
@@ -428,6 +434,38 @@ IMPORTANT:
       parts.push(`CRITICAL: DO NOT generate any of these values that have already been used:`)
       parts.push(`${avoidList}`)
       parts.push(`Your generated value MUST be completely different from all of these.`)
+    }
+
+    // Inject Seed Rules relevant to this field (CS-103)
+    if (context.seedRules && context.seedRules.length > 0) {
+      const relevantRules = context.seedRules.filter(r => 
+        r.targetFields.includes(fieldName) || r.sourceField === fieldName
+      )
+      
+      if (relevantRules.length > 0) {
+        parts.push(`DOMAIN RULES:`)
+        relevantRules.forEach(rule => {
+          if (rule.type === 'dependency' && rule.targetFields.includes(fieldName)) {
+            const sourceVal = existingData?.[rule.sourceField]
+            if (sourceVal !== undefined) {
+              const allowed = rule.config[String(sourceVal)]
+              if (allowed) {
+                parts.push(`- Because ${rule.sourceField} is "${sourceVal}", the only allowed values for ${fieldName} are: [${Array.isArray(allowed) ? allowed.join(', ') : allowed}]`)
+              }
+            }
+          } else if (rule.type === 'exclusion' && rule.targetFields.includes(fieldName)) {
+             const sourceVal = existingData?.[rule.sourceField]
+             if (sourceVal !== undefined) {
+               const excluded = rule.config[String(sourceVal)]
+               if (excluded) {
+                 parts.push(`- Because ${rule.sourceField} is "${sourceVal}", DO NOT use any of these values: [${Array.isArray(excluded) ? excluded.join(', ') : excluded}]`)
+               }
+             }
+          } else {
+            parts.push(`- Rule (${rule.type}): ${rule.description || 'Ensures domain consistency'}`)
+          }
+        })
+      }
     }
 
     if (existingData && Object.keys(existingData).length > 0) {
