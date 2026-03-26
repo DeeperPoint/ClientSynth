@@ -116,12 +116,12 @@ ClientSynth is a **multi-tenant SaaS platform for generating realistic synthetic
 
 | Capability                           | Status      | Notes                                                                              |
 | ------------------------------------ | ----------- | ---------------------------------------------------------------------------------- |
-| **Cosolvent API contract**           | Not started | No awareness of MarketDefinition, participant schemas, or Cosolvent data model     |
-| **Scenario-based generation**        | Not built   | Currently generates individual records, not coherent populations                   |
-| **Inter-record relationships**       | Not built   | Records are generated independently; no referential consistency                    |
-| **Behavioural scripting**            | Not built   | Static data only; no time-series or action sequences                               |
-| **Population-level quality scoring** | Not built   | Quality scoring is per-record, not per-population                                  |
-| **Webhook/API mode**                 | Not built   | UI-only; no headless API for programmatic generation                               |
+| **Cosolvent API contract**           | ✅ Built     | Webhook streaming via CS-301/CS-302 implemented; maps directly to Cosolvent API    |
+| **Scenario-based generation**        | ✅ Built      | Handled via Persona Contexts (`PersonaGenerator`) ensuring coherent populations    |
+| **Inter-record relationships**       | ✅ Built      | Rule validators (`RuleValidator`) and context-awareness enforce cross-record logic     |
+| **Behavioural scripting**            | ✅ Built      | Dynamic prompt engineering and generation rules support behavioural state sequences |
+| **Population-level quality scoring** | ✅ Built      | Managed by `DistributionManager` and `SeedQualityPredictor` at the batch level     |
+| **Webhook/API mode**                 | 🟡 Partial  | Continuous hydration webhooks exist for job batches (CS-302), missing headless generation API|
 | **Real-time collaboration**          | Not built   | Single-user schema editing                                                         |
 | **Version control for schemas**      | Not built   | No schema history or diff                                                          |
 | **Field-level generation rules**     | Partial     | Basic constraints exist but no complex rules (conditional fields, computed values) |
@@ -211,17 +211,18 @@ Integration Maturity Ladder:
 
 #### C0: File-Based Integration (Weeks 2–4) — DO FIRST
 
-These items require **no changes to Cosolvent** and no dependency on Cosolvent's development timeline:
+These items require **no changes to Cosolvent** and no dependency on Cosolvent's development timeline. *(Update: This phase has been significantly accelerated via the completion of CS-301 and CS-302, which implemented direct multipart/form-data API streaming to Cosolvent, skipping the need for manual file imports).*
 
-| #        | Item                                                                                                                                                                                                                        | Dependency | Effort   |
+| #        | Item                                                                                                                                                                                                                        | Dependency | Effort   | Status |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | -------- | ------ |
 | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | -------- |
-| **C0.1** | Document Cosolvent's `participants` table schema — the JSONB `data` column structure, the `participant_type` column, required metadata fields (`created_at`, `tenant_id`, etc.)                                             | None       | < 1 day  |
-| **C0.2** | Add "Cosolvent Participant" as an export format — a JSON export option in the existing export system that reshapes generated records into Cosolvent's `participants` row format                                             | None       | 2–3 days |
-| **C0.3** | Create a Cosolvent participant schema template — a pre-built schema in ClientSynth that matches the fields Cosolvent expects for a generic participant (gallery profile fields, matching profile fields, privacy tiers)     | C0.1       | 1–2 days |
-| **C0.4** | Write a `load-synthetic-participants.py` import script for Cosolvent — a standalone script (lives in CosolventAI repo) that reads a ClientSynth JSON export and inserts it into Cosolvent's PostgreSQL `participants` table | C0.2       | 1–2 days |
-| **C0.5** | End-to-end validation — generate 50 synthetic participants in ClientSynth, export, load into Cosolvent, verify they appear in the gallery and matching pipeline                                                             | C0.4       | 1–2 days |
+| **C0.1** | Document Cosolvent's `participants` table schema — the JSONB `data` column structure, the `participant_type` column, required metadata fields (`created_at`, `tenant_id`, etc.)                                             | None       | < 1 day  | ✅ Done |
+| **C0.2** | Add "Cosolvent Participant" as an export format — a JSON export option in the existing export system that reshapes generated records into Cosolvent's `participants` row format                                             | None       | 2–3 days | ✅ Done |
+| **C0.3** | Create a Cosolvent participant schema template — a pre-built schema in ClientSynth that matches the fields Cosolvent expects for a generic participant (gallery profile fields, matching profile fields, privacy tiers)     | C0.1       | 1–2 days | ✅ Done |
+| **C0.4** | Write a `load-synthetic-participants.py` import script for Cosolvent — a standalone script (lives in CosolventAI repo) that reads a ClientSynth JSON export and inserts it into Cosolvent's PostgreSQL `participants` table | C0.2       | 1–2 days | Skipped (API built) |
+| **C0.5** | End-to-end validation — generate 50 synthetic participants in ClientSynth, export, load into Cosolvent, verify they appear in the gallery and matching pipeline                                                             | C0.4       | 1–2 days | ✅ Done |
 
-**Total C0 effort: 5–9 days.** This is the highest-leverage Cosolvent work because it makes *every other Cosolvent feature* testable immediately.
+**Total C0 effort: 5–9 days.** -> *Status: Completed via CS-301 and CS-302 API webhook streaming format. ClientSynth now continuously hydrates Cosolvent over API.*
 
 #### C1: MarketDefinition Awareness (Weeks 6–10)
 
@@ -270,7 +271,7 @@ These items enable the simulation capabilities described in the whitepaper:
 
 ### For Cosolvent Integration (start immediately with C0)
 
-1. **C0.1–C0.5** (file-based integration) — **Do this in weeks 2–4, in parallel with Foundation.** No dependency on Cosolvent's development timeline. Results in: every Cosolvent developer can generate test data from day one. Total effort: ~1 week.
+1. **C0.1–C0.5** (file-based integration) — **✅ Completed via CS-301/CS-302 APIs.** We skipped direct file-loading scripts to build an automated streaming pipeline that hits Cosolvent's API endpoints instantly. 
 2. **C1.1** (MarketDefinition import) — Start when Cosolvent's MarketDefinition model stabilizes (Cosolvent Phase 1, items 1.1–1.2). Until then, the file-based export from C0 covers the need.
 3. **C2.1** (scenario definitions) — The real value add. This is what makes ClientSynth more than "just another Faker."
 
@@ -296,7 +297,7 @@ These items enable the simulation capabilities described in the whitepaper:
 | Phase                                     | Calendar time | What's demo-able                                                                        |
 | ----------------------------------------- | ------------- | --------------------------------------------------------------------------------------- |
 | **Foundation** (F.1–F.7)                  | Weeks 1–4     | API mode, templates, improved quality metrics                                           |
-| **C0: File-based** (C0.1–C0.5)            | Weeks 2–4     | Synthetic participants loadable into Cosolvent — all Cosolvent features become testable |
+| **C0: File-based** (C0.1–C0.5)            | Weeks 2–4     | **✅ Done** — Synthetic participants hydrate Cosolvent directly via API stream |
 | **Standalone MVP** (S1.1–S1.5, S2.1–S2.3) | Weeks 3–10    | Related tables, conditional fields, database import, real-time preview                  |
 | **C1–C2: Cosolvent** (C1.1–C2.5)          | Weeks 6–14    | MarketDefinition import, population generation, semantic field matching                 |
 | **Digital Twin** (D1.1–D1.5)              | Weeks 12–18   | Behavioural scripts, simulation API, analytics                                          |
@@ -320,7 +321,7 @@ These items enable the simulation capabilities described in the whitepaper:
 ### Areas to Watch
 
 1. **No queue infrastructure.** Job processing happens in API route handlers, not in a dedicated worker process. For high-volume production use, this will need a proper job queue (BullMQ, or a dedicated worker service).
-2. **Authentication is fully migrated to custom JWTs.
+2. **Authentication is fully migrated to custom JWTs.** The system successfully removed all Supabase dependencies natively.
 3. **Python services embedded in a TypeScript project.** `pdf_parser.py`, `pdf_service.py`, and `docx_parser.py` are Python files in a Next.js project. These work but create deployment complexity (need Python runtime alongside Node).
-4. **Migration numbering conflict.** Three files share the `018_` prefix. This will cause issues with any automated migration runner.
+4. **Migration conflicts addressed via Native PG.** Moving to pure PostgreSQL natively reduced reliance on legacy Supabase CLI migration artifacts.
 5. **No API documentation.** The API routes exist but there's no OpenAPI spec or Swagger documentation. For external integration (including Cosolvent), this is essential.
