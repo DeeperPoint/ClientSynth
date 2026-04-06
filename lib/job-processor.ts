@@ -712,6 +712,21 @@ export class JobProcessor {
           throw new Error(`Failed to save generated data: ${insertError instanceof Error ? insertError.message : 'Unknown error'}`)
         }
         console.log(`[v0] Successfully saved batch to database`)
+
+        // CS-302: Trigger Continuous Hydration webhook for Cosolvent
+        const cosolventBaseUrl = (job.config as any)?.cosolventBaseUrl || process.env.COSOLVENT_BASE_URL
+        if (cosolventBaseUrl && finalBatch.length > 0) {
+          try {
+            console.log(`[v0] Streaming live batch to Cosolvent (${finalBatch.length} records)...`)
+            const { CosolventExporter } = await import("@/lib/cosolvent-exporter")
+            const exporter = new CosolventExporter({ baseUrl: cosolventBaseUrl })
+            await exporter.exportBatch(finalBatch)
+            console.log(`[v0] Successfully streamed live batch to Cosolvent.`)
+          } catch (whError) {
+            console.warn(`[v0] Non-fatal: Cosolvent hydration failed:`, whError)
+            await this.logJobMessage(job_id, "warning", `Cosolvent live hydration failed: ${whError instanceof Error ? whError.message : String(whError)}`)
+          }
+        }
       }
 
       const delay = fields.some((f: any) => this.shouldUseAI(f.type)) ? 200 : 50
@@ -1103,7 +1118,7 @@ export class JobProcessor {
     job: JobData,
   ): Promise<string | string[]> {
     const imagesPerRecord = job.config.images_per_record || 1
-    const imageModel = job.config.image_model || "google/gemini-2.5-flash-image-preview"
+    const imageModel = job.config.image_model || "google/gemini-2.5-flash-image"
 
     const contextPrompt = this.buildImagePrompt(field, recordData, recordIndex)
 

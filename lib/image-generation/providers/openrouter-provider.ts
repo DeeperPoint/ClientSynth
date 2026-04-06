@@ -16,7 +16,7 @@ export class OpenRouterImageProvider extends BaseImageProvider {
   constructor(apiKey?: string, model?: string) {
     super()
     this.apiKey = apiKey || process.env.OPENROUTER_API_KEY
-    this.model = model || process.env.OPENROUTER_IMAGE_MODEL || "google/gemini-2.5-flash-image-preview"
+    this.model = model || process.env.OPENROUTER_IMAGE_MODEL || "google/gemini-2.5-flash-image"
     this.s3Uploader = new S3Uploader()
   }
 
@@ -235,7 +235,7 @@ export class OpenRouterImageProvider extends BaseImageProvider {
   }
 
   getSupportedModels(): string[] {
-    return ["google/gemini-2.5-flash-image-preview", "openai/dall-e-3", "stability-ai/stable-diffusion-xl"]
+    return ["google/gemini-2.5-flash-image", "openai/dall-e-3", "stability-ai/stable-diffusion-xl", "stability-ai/stable-diffusion-3"]
   }
 
   validateConfig(): boolean {
