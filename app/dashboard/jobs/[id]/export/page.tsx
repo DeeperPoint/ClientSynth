@@ -327,11 +327,11 @@ export default function ExportPage() {
     )
   }
 
-  if (job.status !== "completed") {
+  if (job.generated_records === 0) {
     return (
       <div className="max-w-6xl mx-auto text-center py-12">
         <h1 className="text-2xl font-bold text-gray-900 mb-2">Export Not Available</h1>
-        <p className="text-gray-600 mb-6">This job must be completed before you can export the data.</p>
+        <p className="text-gray-600 mb-6">No records have been generated yet. Wait for the job to generate some data first.</p>
         <Button asChild>
           <Link href={`/dashboard/jobs/${job.id}`}>View Job Details</Link>
         </Button>
@@ -356,6 +356,15 @@ export default function ExportPage() {
           Export Data: {job.name}
         </h1>
         <p className="text-gray-600">{job.generated_records.toLocaleString()} records available for export</p>
+        {job.status !== "completed" && (
+          <div className="mt-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3 flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 text-yellow-600 flex-shrink-0" />
+            <p className="text-sm text-yellow-800">
+              <strong>Partial export:</strong> This job is currently <strong>{job.status}</strong>. 
+              You are exporting {job.generated_records} of {job.total_records} total records.
+            </p>
+          </div>
+        )}
       </div>
 
       <Tabs defaultValue="create" className="space-y-6">

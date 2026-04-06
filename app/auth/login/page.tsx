@@ -8,7 +8,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
 import { useState } from "react"
 
 export default function LoginPage() {
@@ -16,7 +15,6 @@ export default function LoginPage() {
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
-  const router = useRouter()
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -41,7 +39,8 @@ export default function LoginPage() {
       }
 
       console.log("[v0] Login successful, redirecting to dashboard")
-      router.push("/dashboard")
+      // Use window.location for full page reload to ensure cookie is available
+      window.location.href = "/dashboard"
     } catch (error: unknown) {
       console.log("[v0] Login error caught:", error)
       setError(error instanceof Error ? error.message : "An error occurred")

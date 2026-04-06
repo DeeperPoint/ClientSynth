@@ -18,6 +18,8 @@ import {
   Clock,
   Zap,
   Sparkles,
+  XCircle,
+  StopCircle,
 } from "lucide-react"
 import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
@@ -87,6 +89,8 @@ export default function JobDetailPage() {
   const logsEndRef = useRef<HTMLDivElement>(null)
   const { toast } = useToast()
   const [isTriggering, setIsTriggering] = useState(false)
+  const [isPauseLoading, setIsPauseLoading] = useState(false)
+  const [isCancelLoading, setIsCancelLoading] = useState(false)
   
   // Extract persona context from logs
   const personaContext = logs.find(log => 
@@ -111,18 +115,14 @@ export default function JobDetailPage() {
 
   useEffect(() => {
     if (!isLiveMode) return
-    if (job?.status === "completed") return
+    if (job?.status === "completed" || job?.status === "cancelled") return
     const intervalId = setInterval(() => {
       loadJobDetails()
-    }, 8000)
+    }, 5000)
     return () => clearInterval(intervalId)
   }, [isLiveMode, job?.status])
 
-  useEffect(() => {
-    if (isLiveMode && logsEndRef.current) {
-      logsEndRef.current.scrollIntoView({ behavior: "smooth" })
-    }
-  }, [logs, isLiveMode])
+  // Auto-scroll removed per user request
 
   useEffect(() => {
     if (job && (job.status === "running" || job.status === "processing")) {
@@ -416,14 +416,51 @@ export default function JobDetailPage() {
     }
   }
 
+  const sendJobControl = async (action: "pause" | "resume" | "cancel") => {
+    if (!job) return
+    const setLoading = action === "cancel" ? setIsCancelLoading : setIsPauseLoading
+    setLoading(true)
+    try {
+      const res = await fetch("/api/jobs/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: job.id, action }),
+      })
+      const result = await res.json()
+      if (!res.ok) {
+        throw new Error(result.error || `Failed to ${action} job`)
+      }
+      toast({
+        title: `Job ${action === "pause" ? "Paused" : action === "resume" ? "Resumed" : "Cancelled"}`,
+        description: result.message,
+      })
+      // Refresh job details after a short delay to pick up the status change
+      setTimeout(() => loadJobDetails(), 2000)
+    } catch (error) {
+      console.error(`Error sending ${action} signal:`, error)
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : `Failed to ${action} job`,
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case "completed":
         return "bg-chart-3/10 text-chart-3 border-chart-3/20"
       case "running":
+      case "processing":
         return "bg-primary/10 text-primary border-primary/20"
       case "failed":
         return "bg-destructive/10 text-destructive border-destructive/20"
+      case "paused":
+        return "bg-chart-4/10 text-chart-4 border-chart-4/20"
+      case "cancelled":
+        return "bg-muted text-muted-foreground border-border"
       case "pending":
         return "bg-chart-4/10 text-chart-4 border-chart-4/20"
       default:
@@ -436,9 +473,14 @@ export default function JobDetailPage() {
       case "completed":
         return <CheckCircle className="h-4 w-4" />
       case "running":
+      case "processing":
         return <Zap className="h-4 w-4 animate-pulse" />
       case "failed":
         return <AlertCircle className="h-4 w-4" />
+      case "paused":
+        return <Pause className="h-4 w-4" />
+      case "cancelled":
+        return <XCircle className="h-4 w-4" />
       case "pending":
         return <Clock className="h-4 w-4" />
       default:
@@ -516,7 +558,7 @@ export default function JobDetailPage() {
           </Button>
           <Button variant={isLiveMode ? "default" : "outline"} size="sm" onClick={() => setIsLiveMode(!isLiveMode)}>
             {isLiveMode ? <Pause className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
-            {isLiveMode ? "Live" : "Paused"}
+            {isLiveMode ? "Auto-Refresh" : "Refresh Off"}
           </Button>
         </div>
         <div className="flex items-center justify-between">
@@ -531,17 +573,39 @@ export default function JobDetailPage() {
               {getStatusIcon(job.status)}
               {job.status ? job.status.charAt(0).toUpperCase() + job.status.slice(1) : "Unknown"}
             </Badge>
+            {/* Pause / Resume button */}
+            {["running", "processing"].includes(job.status) && (
+              <Button onClick={() => sendJobControl("pause")} size="sm" variant="outline" disabled={isPauseLoading}>
+                {isPauseLoading ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Pause className="mr-2 h-4 w-4" />}
+                Pause
+              </Button>
+            )}
+            {job.status === "paused" && (
+              <Button onClick={() => sendJobControl("resume")} size="sm" variant="outline" disabled={isPauseLoading}>
+                {isPauseLoading ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+                Resume
+              </Button>
+            )}
+            {/* Cancel button */}
+            {["running", "processing", "paused", "pending"].includes(job.status) && (
+              <Button onClick={() => sendJobControl("cancel")} size="sm" variant="destructive" disabled={isCancelLoading}>
+                {isCancelLoading ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <StopCircle className="mr-2 h-4 w-4" />}
+                Cancel
+              </Button>
+            )}
+            {/* Retry button */}
             {job.status === "failed" && (
               <Button onClick={retryJob} size="sm" variant="outline">
                 <RotateCcw className="mr-2 h-4 w-4" />
                 Retry
               </Button>
             )}
-            {job.status === "completed" && (
+            {/* Export button - available for completed, paused, failed, or running jobs with partial data */}
+            {(job.generated_records > 0) && (
               <Button asChild size="sm" className="gradient-primary text-white shadow-medium">
                 <Link href={`/dashboard/jobs/${job.id}/export`}>
                   <Download className="mr-2 h-4 w-4" />
-                  Export
+                  Export{job.status !== "completed" ? ` (${job.generated_records})` : ""}
                 </Link>
               </Button>
             )}
