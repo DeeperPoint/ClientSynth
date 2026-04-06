@@ -18,9 +18,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate format
-    const validFormats = ["csv", "json", "xlsx", "sql", "xml", "parquet"]
+    const validFormats = ["csv", "json", "xlsx", "sql", "xml", "parquet", "cosolvent"]
     if (!validFormats.includes(format)) {
-      return NextResponse.json({ error: "Invalid format. Must be one of: csv, json, xlsx, sql, xml, parquet" }, { status: 400 })
+      return NextResponse.json({ error: "Invalid format. Must be one of: csv, json, xlsx, sql, xml, parquet, cosolvent" }, { status: 400 })
     }
 
     // Get job to validate access and get tenant_id
@@ -42,8 +42,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Forbidden: You do not have access to this job" }, { status: 403 })
     }
 
-    if (job.status !== "completed") {
-      return NextResponse.json({ error: "Job must be completed before exporting" }, { status: 400 })
+    // Allow export as long as there are generated records (partial export for running/paused/failed jobs)
+    const recordCountResult = await query(`
+      SELECT COUNT(*)::int as count FROM generated_data WHERE job_id = $1
+    `, [job_id])
+    
+    if (recordCountResult.rows[0].count === 0) {
+      return NextResponse.json({ error: "No records generated yet. Wait for the job to produce data before exporting." }, { status: 400 })
     }
 
     // Create export record
@@ -57,8 +62,36 @@ export async function POST(request: NextRequest) {
 
     // Generate export in background (in production, this would be a background job)
     try {
+      if (format === 'cosolvent') {
+        const baseUrl = filters.cosolventBaseUrl || process.env.COSOLVENT_BASE_URL
+        if (!baseUrl) {
+          throw new Error("Cosolvent base URL is required in filters.cosolventBaseUrl or COSOLVENT_BASE_URL env var")
+        }
+        
+        const { CosolventExporter } = await import("@/lib/cosolvent-exporter")
+        const exporter = new CosolventExporter({ baseUrl })
+        
+        const result = await exporter.streamExport(job_id, filters)
+        
+        if (!result.success && result.totalSent === 0) {
+           throw new Error(`Cosolvent export failed fully. Errors: ${JSON.stringify(result.errors)}`)
+        }
+
+        await query(`
+          UPDATE exports 
+          SET status = 'completed', file_url = null, file_size = 0, record_count = $1, updated_at = NOW()
+          WHERE id = $2
+        `, [result.totalSent, exportRecord.id])
+
+        return NextResponse.json({
+          success: true,
+          export: { ...exportRecord, status: "completed", file_url: null, record_count: result.totalSent },
+          cosolventStats: result
+        })
+      }
+
       const generator = new ExportGenerator()
-      const content = await generator.generateExport(job_id, { format, filters })
+      const content = await generator.generateExport(job_id, { format, filters: filters as any })
 
       // In production, you'd upload this to blob storage and store the URL
       // For now, we'll store it as a data URL (not recommended for large files)
