@@ -1,10 +1,11 @@
 import { query, withTransaction } from "@/lib/postgres/client"
-import { AIGenerator, type GenerationContext, type PDFGenerationContext } from "@/lib/ai-generator"
+import { AIGenerator, type GenerationContext, type PDFGenerationContext, type SchemaContext } from "@/lib/ai-generator"
 import { ImageGenerator } from "@/lib/image-generator"
 import { S3Uploader } from "@/lib/s3-uploader"
 import { PDFGenerator } from "@/lib/pdf-generator"
 import { PersonaGenerator } from "@/lib/intelligence/persona-generator"
 import { PersonaContext } from "@/lib/types/schema-extensions"
+import { OutputValidator } from "@/lib/validation/output-validator"
 
 export interface JobData {
   job_id: string
@@ -751,9 +752,16 @@ export class JobProcessor {
       try {
         const record = await this.generateSingleRecord(fields, recordIndex, job, jobKey)
         
-        // Check for field-level duplicates
+        // Check for field-level duplicates (skip repeatable fields like country, city, industry)
         let hasDuplicate = false
+        const repeatableTypes = ['country', 'city', 'industry', 'boolean']
         for (const field of fields) {
+          // Skip fields that can legitimately repeat across records
+          const ft = (field.type || '').toLowerCase()
+          const fn = (field.name || '').toLowerCase()
+          if (repeatableTypes.includes(ft) || fn.includes('country') || fn.includes('city') || fn.includes('industry')) {
+            continue
+          }
           const fieldValue = String(record[field.name] || '').toLowerCase().trim()
           if (fieldValue) {
             const existingValues = this.generatedValuesPerField.get(jobKey)?.get(field.name)
@@ -810,6 +818,107 @@ export class JobProcessor {
     const imageFields = fields.filter((field) => field.type === "image")
 
     console.log(`[v0] Processing ${textFields.length} text fields and ${imageFields.length} image fields`)
+
+    // Build schema context for richer AI prompts
+    const schemaContext: SchemaContext = {
+      schemaName: job.name || 'Unknown Schema',
+      schemaDescription: undefined,
+      allFields: fields.map((f: any) => ({ name: f.name, type: f.type, description: f.description })),
+    }
+
+    // Try schema name from DB if available
+    try {
+      const schemaResult = await query('SELECT name, description FROM schemas WHERE id = $1', [job.schema_id])
+      if (schemaResult.rows[0]) {
+        schemaContext.schemaName = schemaResult.rows[0].name || job.name
+        schemaContext.schemaDescription = schemaResult.rows[0].description
+      }
+    } catch (e) {
+      console.warn('[v0] Failed to fetch schema name, using job name as fallback')
+    }
+
+    // Phase 2: Try whole-record generation first (single LLM call for all text fields)
+    const nonImageNonPdfFields = textFields.filter(f => f.type !== 'pdf')
+    if (nonImageNonPdfFields.length > 0) {
+      try {
+        // Gather previous records for diversity
+        const previousRecords: Record<string, any>[] = []
+        try {
+          const existingRecords = await query(
+            'SELECT record_data FROM generated_data WHERE job_id = $1 ORDER BY record_index DESC LIMIT 5',
+            [job.job_id]
+          )
+          existingRecords.rows.forEach((row: any) => previousRecords.push(row.record_data))
+        } catch (e) { /* non-critical */ }
+
+        console.log(`[v0] Attempting whole-record generation for record ${recordIndex}...`)
+        const wholeRecord = await this.aiGenerator.generateRecord(
+          nonImageNonPdfFields,
+          schemaContext,
+          recordIndex,
+          this.jobPersonaContext.get(job.job_id),
+          previousRecords,
+          job.schema_definition.seed_rules,
+        )
+
+        if (wholeRecord) {
+          // Run output validation on the whole record
+          const validationIssues = OutputValidator.validate(wholeRecord, nonImageNonPdfFields)
+          const errors = validationIssues.filter(i => i.severity === 'error')
+          if (errors.length > 0) {
+            console.warn(`[v0] Whole-record failed output validation (${errors.length} errors):`, errors.map(e => `${e.field}: ${e.issue}`).join('; '))
+            // Attempt auto-fix for fixable errors
+            const { record: autoFixed, remainingIssues } = OutputValidator.autoFix(wholeRecord, errors)
+            const remainingErrors = remainingIssues.filter(i => i.severity === 'error')
+            if (remainingErrors.length > 0) {
+              console.warn(`[v0] ${remainingErrors.length} unfixable errors remain, falling back to field-by-field`)
+            } else {
+              // Auto-fix succeeded, use the fixed record
+              Object.assign(wholeRecord, autoFixed)
+              console.log(`[v0] Auto-fixed ${errors.length} validation issues in whole-record`)
+            }
+          }
+
+          // Validate no duplicates at the field level
+          let hasDuplicateField = false
+          const remainingUnfixed = validationIssues.filter(i => i.severity === 'error' && !i.suggestion)
+          if (remainingUnfixed.length === 0) {
+            for (const field of nonImageNonPdfFields) {
+              const val = String(wholeRecord[field.name] || '').toLowerCase().trim()
+              const existingValues = this.generatedValuesPerField.get(jobKey)?.get(field.name)
+              if (existingValues && existingValues.has(val) && val.length > 0) {
+                // Allow duplicate for common repeatable fields (country, city, industry)
+                const repeatableTypes = ['country', 'city', 'industry', 'boolean']
+                if (!repeatableTypes.includes(field.type) && !field.name.toLowerCase().includes('country') && !field.name.toLowerCase().includes('city')) {
+                  console.warn(`[v0] Whole-record has duplicate for ${field.name}: ${val}, falling back to field-by-field`)
+                  hasDuplicateField = true
+                  break
+                }
+              }
+            }
+          } else {
+            hasDuplicateField = true // Force fallback
+          }
+
+          if (!hasDuplicateField) {
+            // Use the whole record — copy values into record object
+            // NOTE: Do NOT add to tracking set here — tracking is handled by
+            // generateSingleRecordWithRetry after its own duplicate check passes
+            for (const field of nonImageNonPdfFields) {
+              record[field.name] = wholeRecord[field.name]
+            }
+            console.log(`[v0] ✅ Whole-record generation succeeded for record ${recordIndex}`)
+
+            // Process image fields (still need field-by-field for these)
+            await this.processImageFields(imageFields, record, recordIndex, job, jobKey)
+            return record
+          }
+        }
+        console.log(`[v0] Whole-record generation returned null or had duplicates, falling back to field-by-field`)
+      } catch (wholeRecordError) {
+        console.warn(`[v0] Whole-record generation failed, falling back to field-by-field:`, wholeRecordError)
+      }
+    }
 
     for (const field of textFields) {
       console.log(`[v0] Generating field: ${field.name} (type: ${field.type}, required: ${field.required})`)
@@ -905,8 +1014,9 @@ export class JobProcessor {
               existingData: record,
               tenantContext: job.tenant_id,
               schemaId: job.schema_id,
-              personaContext: this.jobPersonaContext.get(job.job_id), // Task 3: Add persona context
-              seedRules: job.schema_definition.seed_rules, // Knowledge Slot rules (CS-103)
+              personaContext: this.jobPersonaContext.get(job.job_id),
+              seedRules: job.schema_definition.seed_rules,
+              schemaContext, // Pass full schema context for richer AI prompts
             }
 
             if (this.shouldUseAI(field.type)) {
@@ -930,25 +1040,22 @@ export class JobProcessor {
                 throw new Error(`AI generated empty value for required field ${field.name}`)
               }
               
-              // Check for duplicate - but allow some duplicates for realistic data (names, cities, countries can repeat)
+              // Check for duplicate - but allow some duplicates for realistic data
               const normalizedValue = String(fieldValue).toLowerCase().trim()
               if (existingValues.has(normalizedValue)) {
-                // For common fields that can realistically repeat, allow duplicates after many records
-                const isCommonField = 
-                  field.type === 'name' || 
-                  field.name.toLowerCase().includes('name') ||
-                  field.type === 'city' ||
-                  field.name.toLowerCase().includes('city') ||
+                // Repeatable fields (country, city, industry, etc.) can always duplicate
+                const isRepeatableField = 
                   field.type === 'country' ||
                   field.name.toLowerCase().includes('country') ||
+                  field.type === 'city' ||
+                  field.name.toLowerCase().includes('city') ||
                   field.type === 'industry' ||
-                  field.name.toLowerCase().includes('industry')
+                  field.name.toLowerCase().includes('industry') ||
+                  field.type === 'boolean'
                 
-                const totalGenerated = existingValues.size
-                
-                if (isCommonField && totalGenerated > 20 && attempts < maxRetries) {
-                  // Allow duplicate common values if we have many records (realistic - people can share cities, countries, etc.)
-                  console.log(`[v0] Allowing duplicate ${field.type} "${fieldValue}" (realistic data, ${totalGenerated} records generated)`)
+                if (isRepeatableField) {
+                  // Always allow — countries, cities, and industries naturally repeat
+                  console.log(`[v0] Allowing duplicate ${field.type} "${fieldValue}" (repeatable field)`)
                 } else {
                   console.warn(`[v0] AI generated duplicate value for ${field.name}: ${fieldValue}`)
                   throw new Error(`Generated duplicate value for field ${field.name}`)
@@ -984,24 +1091,6 @@ export class JobProcessor {
               
               // Clean any trailing numbers that might have been added
               fieldValue = String(fieldValue).replace(/_\d+(_\d+)?$/g, '').trim()
-              
-              // Check for duplicate in fallback generation
-              const normalizedFallbackValue = String(fieldValue).toLowerCase().trim()
-              if (existingValues.has(normalizedFallbackValue)) {
-                console.warn(`[v0] Fallback generated duplicate value, retrying with different approach...`)
-                // Instead of adding numbers, try generating again with a different seed
-                // This is better than adding ugly suffixes
-                if (attempts < maxRetries - 1) {
-                  throw new Error(`Fallback generated duplicate value for field ${field.name}`)
-                }
-                // Last attempt: use a more unique variation without numbers
-                const uniqueSuffix = Math.random().toString(36).substring(2, 6) // Short random string
-                fieldValue = `${fieldValue} ${uniqueSuffix}`
-                const newNormalized = String(fieldValue).toLowerCase().trim()
-                if (existingValues.has(newNormalized)) {
-                  throw new Error(`Fallback generated duplicate value for field ${field.name} even with variation`)
-                }
-              }
               
               console.log(`[v0] Fallback generated for ${field.name}:`, fieldValue)
             }
@@ -1061,6 +1150,17 @@ export class JobProcessor {
       
       // NOTE: Values are NOT added to tracking set here - they're added after duplicate check passes
       // in generateSingleRecordWithRetry to avoid infinite retry loops
+    }
+
+    // Phase 3: Post-generation output validation on the full field-by-field record
+    const outputIssues = OutputValidator.validate(record, textFields)
+    const outputErrors = outputIssues.filter(i => i.severity === 'error')
+    if (outputErrors.length > 0) {
+      console.warn(`[v0] Output validation found ${outputErrors.length} errors in record ${recordIndex}:`,
+        outputErrors.map(e => `${e.field}: ${e.issue}`).join('; '))
+      const { record: fixedRecord } = OutputValidator.autoFix(record, outputErrors)
+      Object.assign(record, fixedRecord)
+      console.log(`[v0] Applied ${outputErrors.filter(e => e.suggestion).length} auto-fixes to record ${recordIndex}`)
     }
 
     if (job.config.enable_images !== false && imageFields.length > 0) {
@@ -1236,30 +1336,58 @@ export class JobProcessor {
     return this.currentJob
   }
 
-  private shouldUseAI(fieldType: string): boolean {
-    const aiFields = [
-      "name",
-      "email",
-      "company",
-      "address",
-      "city",
-      "job_title",
-      "industry",
-      "text",
-      "long_text",
-      "url",
-      "first_name",
-      "last_name",
-      "full_name",
-      "description",
-      "bio",
-      "summary",
-      "notes",
-      "phone",
-      "website",
-    ]
+  /**
+   * Extract image field processing into a reusable method.
+   * Used by both whole-record and field-by-field generation paths.
+   */
+  private async processImageFields(
+    imageFields: any[],
+    record: GeneratedRecord,
+    recordIndex: number,
+    job: JobData,
+    jobKey: string,
+  ): Promise<void> {
+    if (job.config.enable_images === false || imageFields.length === 0) return
 
-    return aiFields.includes(fieldType.toLowerCase())
+    console.log(`[v0] Processing ${imageFields.length} image fields for record ${recordIndex}`)
+    const maxRetries = 5
+
+    for (const field of imageFields) {
+      console.log(`[v0] Generating AI image for field: ${field.name}`)
+      let imageResult: string | string[] | null = null
+      let attempts = 0
+
+      while ((!imageResult || (Array.isArray(imageResult) ? imageResult.length === 0 : imageResult.trim().length === 0)) && attempts < maxRetries) {
+        attempts++
+        try {
+          imageResult = await this.generateAIImage(field, record, recordIndex, job)
+
+          if (!imageResult || (Array.isArray(imageResult) ? imageResult.length === 0 : imageResult.trim().length === 0)) {
+            throw new Error(`Generated empty image URL(s) for field ${field.name}`)
+          }
+
+          record[field.name] = imageResult
+          const imageCount = Array.isArray(imageResult) ? imageResult.length : 1
+          console.log(`[v0] Generated ${imageCount} image URL(s) for ${field.name}`)
+          break
+        } catch (error) {
+          console.warn(`[v0] Image generation attempt ${attempts} failed for ${field.name}:`, error)
+          if (attempts >= maxRetries) {
+            if (field.required) {
+              throw new Error(`Required image field ${field.name} failed after ${maxRetries} attempts`)
+            }
+            break
+          }
+          await new Promise(resolve => setTimeout(resolve, 2000 * attempts))
+        }
+      }
+    }
+  }
+
+  private shouldUseAI(fieldType: string): boolean {
+    // Route all fields through AI except these purely programmatic types
+    const nonAIFields = ['image', 'pdf', 'boolean', 'date']
+    return !nonAIFields.includes(fieldType.toLowerCase())
   }
 
   private isPDFField(fieldType: string): boolean {
@@ -1289,11 +1417,8 @@ export class JobProcessor {
       case "industry":
         return this.generateIndustry(existingValues)
       case "number":
-        // Generate unique number without trailing underscore suffix
-        // Use a combination of random number and record index in a way that doesn't add visible suffix
-        const baseNumber = Math.floor(Math.random() * 1000) + 1
-        const uniqueOffset = recordIndex * 7 // Small multiplier for uniqueness
-        return baseNumber + uniqueOffset
+        // Generate semantically appropriate numbers based on field description
+        return this.generateSemanticNumber(field, recordIndex)
       case "date":
         // For dates, add slight variation based on record index
         return this.generateDate(recordIndex)
@@ -1305,17 +1430,82 @@ export class JobProcessor {
     }
   }
 
-  private generateName(index: number, existingValues?: Set<string>): string {
-    const firstNames = ["John", "Jane", "Michael", "Sarah", "David", "Emily", "Robert", "Lisa", "James", "Maria", "William", "Jessica", "Christopher", "Ashley", "Daniel", "Amanda", "Matthew", "Michelle", "Anthony", "Stephanie"]
-    const lastNames = [
-      "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez",
-      "Wilson", "Anderson", "Taylor", "Thomas", "Hernandez", "Moore", "Martin", "Jackson", "Thompson", "White"
+  /**
+   * Generate a semantically appropriate number based on field name & description.
+   * Uses keyword matching to pick a realistic range instead of random large values.
+   */
+  private generateSemanticNumber(field: any, recordIndex: number): number {
+    const hint = `${field.name || ''} ${field.description || ''}`.toLowerCase()
+
+    // Table of keyword → [min, max] ranges
+    const ranges: Array<{ keywords: string[]; min: number; max: number; decimals?: number }> = [
+      { keywords: ['age', 'years old'], min: 18, max: 80 },
+      { keywords: ['salary', 'compensation', 'income', 'wage'], min: 30000, max: 250000 },
+      { keywords: ['price', 'cost', 'fee', 'rate', 'charge'], min: 5, max: 5000, decimals: 2 },
+      { keywords: ['revenue', 'turnover', 'sales volume'], min: 50000, max: 5000000 },
+      { keywords: ['employee', 'headcount', 'staff', 'team size', 'workforce'], min: 5, max: 5000 },
+      { keywords: ['acre', 'hectare', 'farm size', 'land', 'area'], min: 50, max: 5000 },
+      { keywords: ['production', 'output', 'yield', 'harvest', 'tonne', 'ton'], min: 100, max: 50000 },
+      { keywords: ['score', 'rating', 'grade'], min: 1, max: 100 },
+      { keywords: ['percent', 'percentage', '%', 'rate'], min: 1, max: 100, decimals: 1 },
+      { keywords: ['quantity', 'count', 'amount', 'units', 'inventory'], min: 1, max: 10000 },
+      { keywords: ['weight', 'kg', 'pound', 'lb'], min: 1, max: 500, decimals: 1 },
+      { keywords: ['height', 'length', 'width', 'depth', 'distance'], min: 1, max: 1000, decimals: 1 },
+      { keywords: ['temperature', 'temp'], min: -20, max: 45, decimals: 1 },
+      { keywords: ['latitude', 'lat'], min: -90, max: 90, decimals: 6 },
+      { keywords: ['longitude', 'lng', 'lon'], min: -180, max: 180, decimals: 6 },
+      { keywords: ['year', 'founded', 'established'], min: 1950, max: 2025 },
+      { keywords: ['zip', 'postal'], min: 10000, max: 99999 },
+      { keywords: ['floor', 'storey', 'level'], min: 1, max: 50 },
+      { keywords: ['room', 'bedroom', 'bathroom'], min: 1, max: 10 },
+      { keywords: ['duration', 'minutes', 'hours'], min: 1, max: 480 },
+      { keywords: ['capacity', 'seats', 'slot'], min: 10, max: 5000 },
     ]
 
-    // Try to generate unique name
-    for (let attempt = 0; attempt < 50; attempt++) {
+    for (const range of ranges) {
+      if (range.keywords.some(kw => hint.includes(kw))) {
+        const spread = range.max - range.min
+        const raw = range.min + Math.random() * spread
+        if (range.decimals) {
+          const factor = Math.pow(10, range.decimals)
+          return Math.round(raw * factor) / factor
+        }
+        return Math.round(raw)
+      }
+    }
+
+    // Check for explicit constraints on the field
+    if (field.constraints) {
+      const min = field.constraints.min ?? 1
+      const max = field.constraints.max ?? 10000
+      return Math.round(min + Math.random() * (max - min))
+    }
+
+    // Generic fallback: modest positive integer
+    return Math.round(10 + Math.random() * 990)
+  }
+
+  private generateName(index: number, existingValues?: Set<string>): string {
+    const firstNames = [
+      "John", "Jane", "Michael", "Sarah", "David", "Emily", "Robert", "Lisa",
+      "James", "Maria", "William", "Jessica", "Christopher", "Ashley", "Daniel",
+      "Amanda", "Matthew", "Michelle", "Anthony", "Stephanie", "Andrew", "Jennifer",
+      "Joshua", "Elizabeth", "Joseph", "Megan", "Ryan", "Lauren", "Brandon", "Rachel",
+      "Kevin", "Samantha", "Brian", "Katherine", "Tyler", "Nicole", "Nathan", "Andrea",
+      "Patrick", "Heather"
+    ]
+    const lastNames = [
+      "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis",
+      "Rodriguez", "Martinez", "Wilson", "Anderson", "Taylor", "Thomas", "Hernandez",
+      "Moore", "Martin", "Jackson", "Thompson", "White", "Harris", "Clark", "Lewis",
+      "Robinson", "Walker", "Young", "Allen", "King", "Wright", "Scott", "Baker",
+      "Adams", "Nelson", "Hill", "Campbell", "Mitchell", "Roberts", "Carter", "Phillips", "Evans"
+    ]
+
+    // Try to generate unique name by combining different first+last pairs
+    for (let attempt = 0; attempt < firstNames.length * 2; attempt++) {
       const firstNameIdx = (index * 3 + attempt) % firstNames.length
-      const lastNameIdx = (index * 7 + attempt) % lastNames.length
+      const lastNameIdx = (index * 7 + attempt * 3) % lastNames.length
       const name = `${firstNames[firstNameIdx]} ${lastNames[lastNameIdx]}`
       
       if (!existingValues || !existingValues.has(name.toLowerCase())) {
@@ -1323,28 +1513,41 @@ export class JobProcessor {
       }
     }
     
-    // Fallback with index-based uniqueness
+    // Expanded fallback: use middle initial for uniqueness (e.g. "John A. Smith")
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
     const firstName = firstNames[index % firstNames.length]
-    const lastName = `${lastNames[Math.floor(index / firstNames.length) % lastNames.length]}${index}`
-    return `${firstName} ${lastName}`
+    const lastName = lastNames[Math.floor(index / firstNames.length) % lastNames.length]
+    const middleInitial = letters[index % letters.length]
+    return `${firstName} ${middleInitial}. ${lastName}`
   }
 
   private generateEmail(index: number, existingValues?: Set<string>): string {
     const domains = ["gmail.com", "yahoo.com", "hotmail.com", "company.com", "business.org", "outlook.com", "protonmail.com", "icloud.com"]
+    const separators = ['.', '_', '']
     const name = this.generateName(index).toLowerCase().replace(/\s+/g, ".")
+    // Remove any middle initials for email
+    const cleanName = name.replace(/\.[a-z]\./g, '.')
     
-    // Try unique email
+    // Try unique email with realistic patterns
     for (let attempt = 0; attempt < 50; attempt++) {
       const domain = domains[(index + attempt) % domains.length]
-      const email = `${name}.${index}.${attempt}@${domain}`
+      const sep = separators[attempt % separators.length]
+      // Vary the pattern: first.last, first_last, firstlast, first.last42
+      let email: string
+      if (attempt < domains.length) {
+        email = `${cleanName}@${domain}`
+      } else {
+        const suffix = Math.floor(attempt / domains.length) + 1
+        email = `${cleanName}${suffix}@${domain}`
+      }
       if (!existingValues || !existingValues.has(email.toLowerCase())) {
         return email
       }
     }
     
-    // Fallback
+    // Fallback: still no timestamp hack, use a numeric discriminator
     const domain = domains[index % domains.length]
-    return `${name}.${index}.${Date.now()}@${domain}`
+    return `${cleanName}${index + 100}@${domain}`
   }
 
   private generatePhone(existingValues?: Set<string>): string {
@@ -1368,12 +1571,21 @@ export class JobProcessor {
   }
 
   private generateCompany(index: number, existingValues?: Set<string>): string {
-    const prefixes = ["Tech", "Global", "Advanced", "Premier", "Dynamic", "Innovative", "Strategic", "Digital", "Modern", "Elite", "Progressive", "Smart"]
-    const suffixes = ["Solutions", "Systems", "Corp", "Industries", "Group", "Enterprises", "Partners", "Technologies", "Services", "Consulting", "Ventures", "Holdings"]
+    const prefixes = [
+      "Tech", "Global", "Advanced", "Premier", "Dynamic", "Innovative", "Strategic",
+      "Digital", "Modern", "Elite", "Progressive", "Smart", "Apex", "Vertex", "Summit",
+      "Pinnacle", "Nexus", "Fusion", "Nova", "Quantum"
+    ]
+    const suffixes = [
+      "Solutions", "Systems", "Corp", "Industries", "Group", "Enterprises", "Partners",
+      "Technologies", "Services", "Consulting", "Ventures", "Holdings", "Labs", "Works",
+      "Innovations", "Analytics", "Dynamics", "Networks", "Global", "Capital"
+    ]
 
-    for (let attempt = 0; attempt < 50; attempt++) {
+    // prefix × suffix gives 400 combos — more than enough for 20 records
+    for (let attempt = 0; attempt < prefixes.length * 2; attempt++) {
       const prefixIdx = (index * 2 + attempt) % prefixes.length
-      const suffixIdx = (index * 3 + attempt) % suffixes.length
+      const suffixIdx = (index * 3 + attempt * 2) % suffixes.length
       const company = `${prefixes[prefixIdx]} ${suffixes[suffixIdx]}`
       
       if (!existingValues || !existingValues.has(company.toLowerCase())) {
@@ -1381,10 +1593,11 @@ export class JobProcessor {
       }
     }
     
-    // Fallback
-    const prefix = prefixes[index % prefixes.length]
-    const suffix = `${suffixes[Math.floor(index / prefixes.length) % suffixes.length]} ${index}`
-    return `${prefix} ${suffix}`
+    // Fallback: combine two prefixes ("NovaTech Solutions") — no trailing numbers
+    const p1 = prefixes[index % prefixes.length]
+    const p2 = prefixes[(index + 7) % prefixes.length]
+    const suffix = suffixes[index % suffixes.length]
+    return `${p1}${p2} ${suffix}`
   }
 
   private generateAddress(index: number, existingValues?: Set<string>): string {
