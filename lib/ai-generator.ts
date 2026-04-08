@@ -1,5 +1,11 @@
 import { PersonaContext } from "./types/schema-extensions"
 
+export interface SchemaContext {
+  schemaName: string
+  schemaDescription?: string
+  allFields: Array<{ name: string; type: string; description?: string }>
+}
+
 export interface GenerationContext {
   fieldType: string
   fieldName: string
@@ -13,6 +19,7 @@ export interface GenerationContext {
   temperature?: number // Optional temperature override for generation
   personaContext?: PersonaContext // Persona context for consistent generation
   seedRules?: import("./types/schema-extensions").SeedRule[] // Knowledge Slot rules
+  schemaContext?: SchemaContext // Full schema context for better generation quality
 }
 
 export interface PDFGenerationContext extends GenerationContext {
@@ -375,16 +382,26 @@ IMPORTANT:
         text: "You are a text generator. Generate short, realistic, professional text snippets. Each snippet must be unique and meaningful. Never generate empty values.",
         long_text: "You are a text generator. Generate realistic, detailed paragraphs (3-5 sentences). Each paragraph must be unique and meaningful. Never generate empty values.",
         description: "You are a description generator. Generate concise, professional descriptions. Each description must be unique and informative. Never generate empty values.",
-        phone: "You are a phone number generator. Generate realistic phone numbers in standard formats (e.g., (555) 123-4567 or +1-555-123-4567). Each number must be unique. Never generate empty values.",
-        address: "You are an address generator. Generate realistic street addresses with house numbers and street names. Each address must be unique. Never generate empty values.",
-        city: "You are a city name generator. Generate realistic city names. Each city must be unique. Never generate empty values.",
+        phone: "You are a phone number generator. Generate realistic phone numbers in international format (e.g., +1 (555) 123-4567 or +44 20 7946 0958). The phone format MUST match the country context if provided. Each number must be unique. NEVER return negative numbers or bare integers. Never generate empty values.",
+        address: "You are an address generator. Generate realistic, complete street addresses including house number, street name, city, and postal code. Each address must be unique. Never generate empty values.",
+        city: "You are a city name generator. Generate realistic city names from around the world. Each city must be unique. Never generate empty values.",
+        country: "You are a country name generator. Generate full, unabbreviated country names (e.g., 'United States', 'United Kingdom', 'Netherlands', 'Australia'). NEVER truncate or abbreviate. Each value must be a real country. Never generate empty values.",
+        number: "You are a numeric data generator. Generate realistic numbers appropriate for the field context. Consider the field name and description to determine a sensible range. For example: farm sizes should be 50-5000 acres, annual production should be 100-50000 tonnes, prices should be realistic market values. Return ONLY a number (integer or decimal). Never return negative values unless the context explicitly requires it.",
         job_title: "You are a job title generator. Generate realistic professional job titles. Each title must be unique. Never generate empty values.",
         industry: "You are an industry generator. Generate realistic industry names. Each industry must be unique. Never generate empty values.",
         url: "You are a URL generator. Generate realistic website URLs (e.g., https://example.com). Each URL must be unique and valid. Never generate empty values.",
         website: "You are a website generator. Generate realistic website URLs (e.g., https://example.com). Each URL must be unique and valid. Never generate empty values.",
+        date: "You are a date generator. Generate realistic dates in YYYY-MM-DD format. Dates should be within a reasonable range for the context (e.g., founding dates 1950-2024, event dates within last 5 years). Never generate empty values.",
       }
       
-      basePrompt = prompts[ft] || `You are a data generator. Generate realistic, professional values for field type: ${ft}. Each value must be unique and different from all previous generations. Never generate empty values or error messages. Return only clean, valid data.`
+      basePrompt = prompts[ft] || `You are a data generator. Generate realistic, professional values for the field '${context.fieldName}' (type: ${ft}). Each value must be unique and different from all previous generations. Never generate empty values or error messages. Return only clean, valid data.`
+    }
+    
+    // Inject full schema context so the LLM understands what entity it's generating data for
+    if (context.schemaContext) {
+      const { schemaName, schemaDescription, allFields } = context.schemaContext
+      const fieldSummary = allFields.map(f => `${f.name} (${f.type})`).join(', ')
+      basePrompt += `\n\nSCHEMA CONTEXT: You are generating data for a record in the "${schemaName}" dataset${schemaDescription ? ` — ${schemaDescription}` : ''}. The full record has these fields: [${fieldSummary}]. Ensure your generated value is realistic and consistent within this domain context.`
     }
     
     // Add example data context if available
@@ -414,11 +431,11 @@ IMPORTANT:
     // CHANGED: Don't include "for field: {fieldName}" in the prompt to avoid leakage
     const parts: string[] = [`Generate a unique, realistic value.`]
 
-    // Inject persona context if available (this is the key addition for section 1.1)
+    // Inject persona context if available — thematic background only, NOT identity
     if (personaContext && Object.keys(personaContext).length > 0) {
       const personaDescription = this.formatPersonaContext(personaContext)
-      parts.push(`Persona Context: ${personaDescription}`)
-      parts.push(`All generated values must be consistent with this persona context.`)
+      parts.push(`Thematic Background: ${personaDescription}`)
+      parts.push(`Use this background for domain context (industry, region, culture) but generate a UNIQUE person identity (name, email, phone) for this specific record.`)
     }
 
     if (fieldDescription) {
@@ -531,6 +548,139 @@ IMPORTANT:
   async generateBatch(contexts: GenerationContext[]): Promise<string[]> {
     const promises = contexts.map((context) => this.generateFieldValue(context))
     return Promise.all(promises)
+  }
+
+  /**
+   * Generate an entire record in a single LLM call for better cross-field consistency.
+   * Falls back to null if the model fails, so callers should use field-by-field as fallback.
+   */
+  async generateRecord(
+    fields: Array<{ name: string; type: string; description?: string }>,
+    schemaContext: SchemaContext,
+    recordIndex: number,
+    personaContext?: PersonaContext,
+    previousRecords?: Record<string, any>[],
+    seedRules?: import("./types/schema-extensions").SeedRule[],
+  ): Promise<Record<string, string> | null> {
+    const textFields = fields.filter(f => !['image', 'pdf'].includes(f.type.toLowerCase()))
+    if (textFields.length === 0) return null
+
+    const fieldDescriptions = textFields.map(f => {
+      let desc = `- "${f.name}" (type: ${f.type})`
+      if (f.description) desc += `: ${f.description}`
+      return desc
+    }).join('\n')
+
+    let systemPrompt = `You are a synthetic data generator for the "${schemaContext.schemaName}" dataset${schemaContext.schemaDescription ? ` — ${schemaContext.schemaDescription}` : ''}.
+Generate a SINGLE complete, realistic record with ALL of the following fields. Every value must be realistic, domain-appropriate, and internally consistent (e.g., a farm in Canada should have a Canadian phone number and region).
+IMPORTANT: Each record must feature a COMPLETELY DIFFERENT person identity (name, contact info, email). Do NOT reuse names from previous records.
+
+Fields to generate:
+${fieldDescriptions}
+
+CRITICAL FORMAT RULES:
+- phone: Use international format like +1 (555) 123-4567. NEVER return negative numbers or bare integers.
+- country: Use full unabbreviated names like "United States", "United Kingdom". NEVER truncate.
+- number fields: Return realistic values appropriate for the field description. NEVER return negative values unless explicitly required.
+- email: Use realistic professional email format derived from the person's UNIQUE name for this record.
+- contact/person names: Generate a COMPLETELY UNIQUE full name. Use diverse name origins (European, Asian, African, Latin American, Middle Eastern). NEVER repeat names from previous records.
+- All text fields: Generate meaningful, domain-relevant content. No trailing numbers or random suffixes.
+- Return ONLY a JSON object with field names as keys and generated values as string values.`
+
+    if (personaContext && Object.keys(personaContext).length > 0) {
+      systemPrompt += `\n\nThematic Background: ${this.formatPersonaContext(personaContext)}. Use this for domain context (industry, region, culture) but generate a UNIQUE person identity (name, email, phone) for each record. Do NOT reuse persona names.`
+    }
+
+    if (seedRules && seedRules.length > 0) {
+      systemPrompt += `\n\nDOMAIN CONSTRAINTS (Knowledge Slot): You must strictly adhere to the following logic and dependencies. Do not invent values that contradict these rules.`
+    }
+
+    let userPrompt = `Generate record #${recordIndex + 1}. This record must feature a COMPLETELY DIFFERENT and UNIQUE person (name, contact, email) from all previous records. Use a different cultural origin for the name.`
+
+    if (previousRecords && previousRecords.length > 0) {
+      const recentRecords = previousRecords.slice(-5)
+      const prevSummary = recentRecords.map((r, i) => {
+        const pairs = Object.entries(r).filter(([_, v]) => v != null).map(([k, v]) => `${k}: ${v}`).join(', ')
+        return `Record ${i + 1}: {${pairs}}`
+      }).join('\n')
+      userPrompt += `\n\nPrevious records (DO NOT duplicate these):\n${prevSummary}`
+    }
+
+    // Build JSON schema for structured output
+    const properties: Record<string, any> = {}
+    const required: string[] = []
+    for (const f of textFields) {
+      properties[f.name] = { type: "string" }
+      required.push(f.name)
+    }
+
+    const maxTokens = Math.max(300, textFields.length * 80)
+
+    try {
+      console.log(`[AIGenerator] Generating whole record with ${textFields.length} fields in single call`)
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": process.env.OPENROUTER_SITE_URL || "http://localhost:3000",
+          "X-Title": process.env.OPENROUTER_APP_TITLE || "ClientSynth",
+        },
+        body: JSON.stringify({
+          model: this.model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          max_tokens: maxTokens,
+          temperature: 0.9,
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "record_data",
+              strict: true,
+              schema: {
+                type: "object",
+                properties,
+                required,
+                additionalProperties: false,
+              },
+            },
+          },
+        }),
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error(`[AIGenerator] Whole-record API error: ${response.status}`, errorText)
+        return null
+      }
+
+      const data = await response.json()
+      const content = data.choices?.[0]?.message?.content?.trim()
+      if (!content) {
+        console.warn('[AIGenerator] Whole-record returned empty content')
+        return null
+      }
+
+      const parsed = JSON.parse(content)
+      
+      // Validate all fields are present and non-empty
+      for (const f of textFields) {
+        if (!parsed[f.name] || String(parsed[f.name]).trim().length === 0) {
+          console.warn(`[AIGenerator] Whole-record missing field: ${f.name}`)
+          return null
+        }
+        // Clean trailing artifacts
+        parsed[f.name] = String(parsed[f.name]).replace(/_\d+(_\d+)?$/g, '').trim()
+      }
+
+      console.log(`[AIGenerator] Whole-record generated successfully with ${Object.keys(parsed).length} fields`)
+      return parsed
+    } catch (error) {
+      console.error('[AIGenerator] Whole-record generation failed:', error)
+      return null
+    }
   }
 
   async generatePDFField(context: PDFGenerationContext): Promise<{ url: string; s3Key: string }> {

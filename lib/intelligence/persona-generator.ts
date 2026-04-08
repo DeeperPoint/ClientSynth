@@ -149,16 +149,22 @@ export class PersonaGenerator {
   private buildSystemPrompt(): string {
     return `You are a persona context generator for synthetic data generation.
 
-Your task is to analyze a data schema and generate a consistent "root context" object that will serve as the foundation for generating all fields in that schema.
+Your task is to analyze a data schema and generate a THEMATIC CONTEXT object that defines the domain, industry, and setting for the dataset — NOT specific individual identities.
 
-The persona context should contain key attributes that will make all generated data coherent and realistic. For example:
-- If the schema includes company-related fields, generate: companyName, industry, region, companySize
-- If the schema includes person-related fields, generate: demographics, location, profession
-- If the schema includes product-related fields, generate: productCategory, targetMarket, priceRange
+CRITICAL RULES:
+- NEVER generate specific person names, contact names, first names, or last names.
+- NEVER generate specific email addresses.
+- NEVER generate specific phone numbers.
+- DO generate: industry, sector, geographic region, company size range, business type, cultural context, typical job roles/titles (as categories, not specific names).
 
-The persona context should be realistic, specific, and provide enough detail to generate consistent data across all fields.
+The persona context provides the SHARED THEMATIC BACKGROUND for the dataset. Individual record identities (names, emails, phone numbers) will be generated separately for each record to ensure diversity.
 
-Return ONLY a valid JSON object with key-value pairs. The values can be strings, numbers, or objects as appropriate.`
+For example:
+- Company-related schemas: generate industry, region, companySize, businessType
+- Person-related schemas: generate demographics (age range, gender distribution), location (region, urban/rural), profession (industry sector, experience level)
+- Product-related schemas: generate productCategory, targetMarket, priceRange
+
+Return ONLY a valid JSON object with key-value pairs. Values can be strings, numbers, or objects.`
   }
 
   /**
@@ -172,7 +178,7 @@ Return ONLY a valid JSON object with key-value pairs. The values can be strings,
       })
       .join("\n")
 
-    return `Generate a persona context for the following data schema:
+    return `Generate a THEMATIC CONTEXT for the following data schema. This context defines the domain and setting, NOT specific individual identities.
 
 Schema Name: ${schema.name || "Untitled Schema"}
 Schema Description: ${schema.description || "No description provided"}
@@ -180,34 +186,43 @@ Schema Description: ${schema.description || "No description provided"}
 Fields in this schema:
 ${fieldDescriptions}
 
-Analyze these fields and generate a root context object (persona) that will ensure all generated data is consistent and realistic.
+CRITICAL: Do NOT include any specific person names, contact names, email addresses, or phone numbers. These will be generated uniquely per record.
 
-For example, if you see fields like "company_name", "industry", "region", "founding_year", you might generate:
+INSTEAD, generate ONLY thematic context like:
+- Industry/sector
+- Geographic region/country
+- Business characteristics (size, type, founding era)
+- Demographic ranges (age range, gender distribution — NOT specific names)
+- Professional context (industry sector, experience levels — NOT specific names)
+
+Good example for a farm/agriculture schema:
 {
-  "companyName": "Green Valley Farms",
   "industry": "Agriculture",
-  "region": "Ohio, USA",
-  "foundingYear": 1985,
-  "companySize": "medium"
+  "subSector": "Organic Farming",
+  "region": "Ontario, Canada",
+  "businessSize": "small to medium",
+  "typicalRoles": ["Farm Manager", "Operations Director", "Sales Coordinator"],
+  "culturalContext": "North American rural agricultural community"
 }
 
-If you see fields like "first_name", "last_name", "email", "job_title", "city", you might generate:
+Good example for a people/contacts schema:
 {
   "demographics": {
-    "ageRange": "25-45",
-    "genderDistribution": "balanced"
+    "ageRange": "25-55",
+    "genderDistribution": "balanced",
+    "nameOrigins": "diverse international"
   },
   "location": {
     "primaryRegion": "United States",
-    "urbanRural": "urban"
+    "urbanRural": "mixed"
   },
   "profession": {
     "industrySector": "Technology",
-    "experienceLevel": "mid-level"
+    "experienceLevel": "varied"
   }
 }
 
-Generate a persona context that makes sense for the fields provided. Be specific and realistic. Return only valid JSON.`
+Generate a thematic context that makes sense for the fields provided. Be specific and realistic. Return only valid JSON.`
   }
 
   /**
