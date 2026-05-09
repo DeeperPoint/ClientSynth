@@ -195,7 +195,7 @@ ClientSynth generates synthetic data. It does **not**:
 - **Run the marketplace** — that is Cosolvent's matching engine
 - **Host real user profiles** — synthetic profiles must never coexist with real participants in a live marketplace
 - **Configure marketplace rules** — that is MarketForge and `marketplace.yaml`
-- **Curate domain knowledge** — that is KnowledgeSlot
+- **Curate domain knowledge** — that is CommonContext
 
 ClientSynth's value is in making every other tool in the ecosystem **testable** with realistic populations before real users arrive.
 
@@ -207,4 +207,4 @@ ClientSynth's value is in making every other tool in the ecosystem **testable** 
 |---|---|
 | **Cosolvent** | Matching engine that receives synthetic participants for testing |
 | **MarketForge** | Market configuration that defines the schemas ClientSynth generates against |
-| **KnowledgeSlot** | Reference library curation — orthogonal to synthetic data |
+| **CommonContext** | Reference library curation — orthogonal to synthetic data |
