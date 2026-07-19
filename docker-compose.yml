@@ -1,6 +1,30 @@
-version: '3.8'
+# Full local stack: `docker compose up` starts Postgres (with migrations from
+# ./scripts applied on first init) and the ClientSynth app on port 3000.
+# Copy .env.example to .env first — compose interpolates it automatically.
 
 services:
+  app:
+    build: .
+    container_name: client_synth_app
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/client_synth_db
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      FAL_KEY: ${FAL_KEY:-}
+      MOCK_S3: ${MOCK_S3:-true}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-}
+      COSOLVENT_BASE_URL: ${COSOLVENT_BASE_URL:-}
+    volumes:
+      - ./uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   postgres:
     image: postgres:15
     container_name: client_synth_db
@@ -12,7 +36,10 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts:/docker-entrypoint-initdb.d
+      # 001-015 are legacy Supabase-era scripts that fail on vanilla Postgres;
+      # docker/init-db.sh applies the consolidated 016 bootstrap + 017-020.
+      - ./scripts:/migrations:ro
+      - ./docker/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]

@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.vscode
+.venv
+__pycache__
+lib/__pycache__
+uploads
+*.log
+.env
+.env.*
+.DS_Store

@@ -28,3 +28,6 @@ next-env.d.ts
 
 # python environments
 .venv/
+
+# allow the placeholder-only template
+!.env.example

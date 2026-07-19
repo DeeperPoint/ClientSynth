@@ -284,5 +284,5 @@ test/demo instances only.
 | REST API payloads | `API_REFERENCE.md` |
 | Architecture & internals | `ARCHITECTURE.md`, `DOCUMENTATION.md` |
 | Development roadmap | `ROADMAP.md` |
-| Local setup / self-hosting | `DOCUMENTATION.md` (Development Setup) + `docker-compose.yml` |
+| Local setup / self-hosting | Copy `.env.example` to `.env`, then `docker compose up` (app on port 3000, Postgres migrated automatically); details in `DOCUMENTATION.md` |
 | Testing | `TESTING.md` |
