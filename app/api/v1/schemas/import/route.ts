@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
         ...schema_definition.metadata,
         version: "1.0-knowledge-slot",
         imported_at: new Date().toISOString(),
-        source: "AIKnowledgeSlotCuration"
+        source: "CommonContext"
       }
     }
 
