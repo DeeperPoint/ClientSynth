@@ -265,6 +265,7 @@ describe("POST /api/exports/create (cosolvent format)", () => {
       status: "completed",
     }]))
     mockHasTenantAccess.mockResolvedValueOnce(true)
+    mockQuery.mockResolvedValueOnce(mockQueryResult([{ count: 1 }])) // generated_data count
     mockQuery.mockResolvedValueOnce(mockQueryResult([{
       id: TEST_IDS.EXPORT,
       tenant_id: TEST_IDS.TENANT,
@@ -314,6 +315,7 @@ describe("POST /api/exports/create (cosolvent format)", () => {
       status: "completed",
     }]))
     mockHasTenantAccess.mockResolvedValueOnce(true)
+    mockQuery.mockResolvedValueOnce(mockQueryResult([{ count: 1 }])) // generated_data count
     mockQuery.mockResolvedValueOnce(mockQueryResult([{
       id: TEST_IDS.EXPORT,
       tenant_id: TEST_IDS.TENANT,
