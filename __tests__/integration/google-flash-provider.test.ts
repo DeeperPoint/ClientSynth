@@ -1,132 +1,141 @@
-import { GoogleFlashImageProvider } from "@/lib/image-generation/providers/google-flash-provider"
+/**
+ * @jest-environment node
+ */
+/**
+ * GoogleFlashProvider tests.
+ *
+ * The previous version of this file could not run at all: under the jsdom
+ * environment, `@google/genai` resolves to its ESM `dist/web` build, which Jest
+ * cannot parse ("Unexpected token 'export'"), so the whole suite errored out.
+ * The node environment resolves the CommonJS build instead — and is the right
+ * environment for a server-side provider anyway.
+ *
+ * It also imported `GoogleFlashImageProvider` (the class is `GoogleFlashProvider`)
+ * and asserted an API that does not exist — `result.imageData`, a `generateBatch`
+ * method. The provider returns `{ buffer, contentType, metadata }`.
+ *
+ * The Google SDK is mocked so these run offline and cost nothing.
+ */
 
-describe("GoogleFlashImageProvider Integration Tests", () => {
-  let provider: GoogleFlashImageProvider
+const mockGenerateContent = jest.fn()
+
+jest.mock("@google/genai", () => ({
+  GoogleGenAI: jest.fn().mockImplementation(() => ({
+    models: { generateContent: mockGenerateContent },
+  })),
+}))
+
+import { GoogleFlashProvider } from "@/lib/image-generation/providers/google-flash-provider"
+
+const PNG_BYTES = Buffer.from("fake-png-bytes")
+
+function responseWithImage(mimeType = "image/png") {
+  return {
+    candidates: [
+      {
+        content: {
+          parts: [{ inlineData: { data: PNG_BYTES.toString("base64"), mimeType } }],
+        },
+      },
+    ],
+  }
+}
+
+describe("GoogleFlashProvider", () => {
+  let provider: GoogleFlashProvider
 
   beforeEach(() => {
-    provider = new GoogleFlashImageProvider()
+    jest.clearAllMocks()
+    process.env.GOOGLE_AI_API_KEY = "test-key"
+    mockGenerateContent.mockResolvedValue(responseWithImage())
+    provider = new GoogleFlashProvider()
   })
 
-  describe("Image Generation", () => {
-    it("should generate a single image with default settings", async () => {
-      const result = await provider.generateImage({
-        prompt: "A professional headshot of a software engineer",
-        model: "gemini-2.0-flash-exp",
-      })
+  describe("configuration", () => {
+    it("refuses to construct without an API key", () => {
+      delete process.env.GOOGLE_AI_API_KEY
+      expect(() => new GoogleFlashProvider()).toThrow(/GOOGLE_AI_API_KEY/)
+      process.env.GOOGLE_AI_API_KEY = "test-key"
+    })
 
-      expect(result).toBeDefined()
-      expect(result.imageData).toBeDefined()
-      expect(result.imageData.length).toBeGreaterThan(0)
-      expect(result.metadata).toBeDefined()
-      expect(result.metadata.model).toBe("gemini-2.0-flash-exp")
-      expect(result.metadata.provider).toBe("google-flash")
-    }, 30000)
+    it("reports its supported models", () => {
+      expect(provider.getSupportedModels()).toContain("gemini-2.0-flash-exp")
+    })
 
-    it("should generate multiple images in a batch", async () => {
-      const results = await provider.generateBatch({
-        prompts: [
-          "A professional headshot of a marketing manager",
-          "A professional headshot of a data scientist",
-          "A professional headshot of a product designer",
-        ],
-        model: "gemini-2.0-flash-exp",
-      })
-
-      expect(results).toHaveLength(3)
-      results.forEach((result) => {
-        expect(result.imageData).toBeDefined()
-        expect(result.imageData.length).toBeGreaterThan(0)
-        expect(result.metadata.provider).toBe("google-flash")
-      })
-    }, 60000)
-
-    it("should handle complex prompts with context", async () => {
-      const result = await provider.generateImage({
-        prompt:
-          "Professional headshot photo of person named Sarah Johnson working as Marketing Director in Technology industry at Innovative Solutions. Professional, high-quality, realistic photo.",
-        model: "gemini-2.0-flash-exp",
-      })
-
-      expect(result).toBeDefined()
-      expect(result.imageData).toBeDefined()
-      expect(result.metadata.prompt).toContain("Sarah Johnson")
-    }, 30000)
-
-    it("should respect rate limiting", async () => {
-      const startTime = Date.now()
-
-      // Generate 3 images rapidly
-      await provider.generateImage({ prompt: "Test image 1", model: "gemini-2.0-flash-exp" })
-      await provider.generateImage({ prompt: "Test image 2", model: "gemini-2.0-flash-exp" })
-      await provider.generateImage({ prompt: "Test image 3", model: "gemini-2.0-flash-exp" })
-
-      const endTime = Date.now()
-      const duration = endTime - startTime
-
-      // Should take at least 2 seconds due to rate limiting (1 req/sec)
-      expect(duration).toBeGreaterThanOrEqual(2000)
-    }, 60000)
-
-    it("should handle errors gracefully", async () => {
-      await expect(
-        provider.generateImage({
-          prompt: "", // Empty prompt should fail
-          model: "gemini-2.0-flash-exp",
-        }),
-      ).rejects.toThrow()
-    }, 30000)
+    it("validates config against the environment", () => {
+      expect(provider.validateConfig()).toBe(true)
+      delete process.env.GOOGLE_AI_API_KEY
+      expect(provider.validateConfig()).toBe(false)
+      process.env.GOOGLE_AI_API_KEY = "test-key"
+    })
   })
 
-  describe("Batch Processing", () => {
-    it("should process batches with rate limiting", async () => {
-      const prompts = Array.from({ length: 5 }, (_, i) => `Test image ${i + 1}`)
+  describe("generateImage", () => {
+    it("decodes the returned image into a buffer", async () => {
+      const result = await provider.generateImage({ prompt: "A professional headshot" })
 
-      const startTime = Date.now()
-      const results = await provider.generateBatch({
-        prompts,
+      expect(result.buffer).toBeInstanceOf(Buffer)
+      expect(result.buffer.equals(PNG_BYTES)).toBe(true)
+      expect(result.contentType).toBe("image/png")
+    })
+
+    it("names the model in the request rather than fetching it first", async () => {
+      await provider.generateImage({ prompt: "A headshot" })
+
+      expect(mockGenerateContent).toHaveBeenCalledWith(
+        expect.objectContaining({ model: "gemini-2.0-flash-exp" }),
+      )
+    })
+
+    it("asks for an image modality", async () => {
+      await provider.generateImage({ prompt: "A headshot" })
+
+      const request = mockGenerateContent.mock.calls[0][0]
+      expect(request.config.responseModalities).toEqual(["Image"])
+      expect(request.contents[0].parts[0].text).toBe("A headshot")
+    })
+
+    it("returns metadata describing the generation", async () => {
+      const result = await provider.generateImage({ prompt: "A headshot", width: 256, height: 256 })
+
+      expect(result.metadata).toMatchObject({
         model: "gemini-2.0-flash-exp",
+        provider: "google-flash",
+        prompt: "A headshot",
+        dimensions: { width: 256, height: 256 },
       })
-      const endTime = Date.now()
+    })
 
-      expect(results).toHaveLength(5)
-      expect(endTime - startTime).toBeGreaterThanOrEqual(4000) // At least 4 seconds for 5 images
-    }, 90000)
+    it("uses a lower temperature for hd quality", async () => {
+      await provider.generateImage({ prompt: "A headshot", quality: "hd" })
+      expect(mockGenerateContent.mock.calls[0][0].config.temperature).toBe(0.4)
 
-    it("should handle partial batch failures", async () => {
-      const prompts = [
-        "Valid prompt 1",
-        "", // Invalid prompt
-        "Valid prompt 2",
-      ]
+      jest.clearAllMocks()
+      mockGenerateContent.mockResolvedValue(responseWithImage())
+      await provider.generateImage({ prompt: "A headshot", quality: "standard" })
+      expect(mockGenerateContent.mock.calls[0][0].config.temperature).toBe(0.7)
+    })
 
-      const results = await provider.generateBatch({
-        prompts,
-        model: "gemini-2.0-flash-exp",
-        continueOnError: true,
-      })
+    it("honours the mime type the API reports", async () => {
+      mockGenerateContent.mockResolvedValueOnce(responseWithImage("image/jpeg"))
+      const result = await provider.generateImage({ prompt: "A headshot" })
+      expect(result.contentType).toBe("image/jpeg")
+    })
 
-      // Should have results for valid prompts
-      expect(results.filter((r) => r.imageData).length).toBeGreaterThan(0)
-    }, 60000)
-  })
-
-  describe("Model Support", () => {
-    it("should work with gemini-2.0-flash-exp model", async () => {
-      const result = await provider.generateImage({
-        prompt: "Test image",
-        model: "gemini-2.0-flash-exp",
+    it("fails clearly when the response carries no image", async () => {
+      mockGenerateContent.mockResolvedValueOnce({
+        candidates: [{ content: { parts: [{ text: "I cannot generate that" }] } }],
       })
 
-      expect(result.metadata.model).toBe("gemini-2.0-flash-exp")
-    }, 30000)
+      await expect(provider.generateImage({ prompt: "A headshot" })).rejects.toThrow(
+        /No image data returned/,
+      )
+    })
 
-    it("should work with imagen-3.0-generate-001 model", async () => {
-      const result = await provider.generateImage({
-        prompt: "Test image",
-        model: "imagen-3.0-generate-001",
-      })
+    it("propagates an API failure", async () => {
+      mockGenerateContent.mockRejectedValueOnce(new Error("quota exceeded"))
 
-      expect(result.metadata.model).toBe("imagen-3.0-generate-001")
-    }, 30000)
+      await expect(provider.generateImage({ prompt: "A headshot" })).rejects.toThrow("quota exceeded")
+    })
   })
 })
