@@ -862,45 +862,70 @@ export class JobProcessor {
         )
 
         if (wholeRecord) {
-          // Run output validation on the whole record
-          const validationIssues = OutputValidator.validate(wholeRecord, nonImageNonPdfFields)
-          const errors = validationIssues.filter(i => i.severity === 'error')
+          // Run output validation on the whole record, auto-fixing where a
+          // concrete suggestion exists and re-validating the result.
+          let validationIssues = OutputValidator.validate(wholeRecord, nonImageNonPdfFields)
+          let errors = validationIssues.filter(i => i.severity === 'error')
+
           if (errors.length > 0) {
             console.warn(`[v0] Whole-record failed output validation (${errors.length} errors):`, errors.map(e => `${e.field}: ${e.issue}`).join('; '))
-            // Attempt auto-fix for fixable errors
-            const { record: autoFixed, remainingIssues } = OutputValidator.autoFix(wholeRecord, errors)
+            const { record: autoFixed, remainingIssues } = OutputValidator.autoFix(wholeRecord, errors, nonImageNonPdfFields)
             const remainingErrors = remainingIssues.filter(i => i.severity === 'error')
-            if (remainingErrors.length > 0) {
-              console.warn(`[v0] ${remainingErrors.length} unfixable errors remain, falling back to field-by-field`)
-            } else {
-              // Auto-fix succeeded, use the fixed record
+            if (remainingErrors.length === 0) {
               Object.assign(wholeRecord, autoFixed)
-              console.log(`[v0] Auto-fixed ${errors.length} validation issues in whole-record`)
+              validationIssues = remainingIssues
+              errors = []
+              console.log(`[v0] Auto-fixed all validation issues in whole-record`)
+            } else {
+              errors = remainingErrors
+              console.warn(`[v0] ${remainingErrors.length} unfixable error(s) remain, falling back to field-by-field`)
             }
           }
 
-          // Validate no duplicates at the field level
-          let hasDuplicateField = false
-          const remainingUnfixed = validationIssues.filter(i => i.severity === 'error' && !i.suggestion)
-          if (remainingUnfixed.length === 0) {
+          // Any surviving error means the record would be rejected downstream;
+          // fall back rather than persist it.
+          let rejectWholeRecord = errors.length > 0
+
+          if (!rejectWholeRecord) {
             for (const field of nonImageNonPdfFields) {
-              const val = String(wholeRecord[field.name] || '').toLowerCase().trim()
+              const raw = wholeRecord[field.name]
+              const val = Array.isArray(raw) ? raw.join(', ').toLowerCase().trim() : String(raw ?? '').toLowerCase().trim()
+              if (val.length === 0) continue
+
               const existingValues = this.generatedValuesPerField.get(jobKey)?.get(field.name)
-              if (existingValues && existingValues.has(val) && val.length > 0) {
-                // Allow duplicate for common repeatable fields (country, city, industry)
-                const repeatableTypes = ['country', 'city', 'industry', 'boolean']
-                if (!repeatableTypes.includes(field.type) && !field.name.toLowerCase().includes('country') && !field.name.toLowerCase().includes('city')) {
-                  console.warn(`[v0] Whole-record has duplicate for ${field.name}: ${val}, falling back to field-by-field`)
-                  hasDuplicateField = true
-                  break
-                }
+              if (!existingValues) continue
+
+              // Allow duplicates for fields that legitimately repeat, and for
+              // any field restricted to a fixed option set — with two allowed
+              // countries, records must reuse them.
+              const repeatableTypes = ['country', 'city', 'industry', 'boolean', 'select']
+              const isRepeatable =
+                repeatableTypes.includes(field.type) ||
+                field.name.toLowerCase().includes('country') ||
+                field.name.toLowerCase().includes('city') ||
+                (field.constraints?.options?.length ?? 0) > 0
+              if (isRepeatable) continue
+
+              if (existingValues.has(val)) {
+                console.warn(`[v0] Whole-record has duplicate for ${field.name}: ${val}, falling back to field-by-field`)
+                rejectWholeRecord = true
+                break
+              }
+
+              // Person-name fields also reject near-duplicates, which exact
+              // matching misses ("Jane Vance" vs "Jane S. Vance").
+              const isPersonName =
+                ['name', 'full_name', 'first_name', 'last_name'].includes(field.type) ||
+                /(^|_)(contact|person|owner|founder)?_?name$/.test(field.name.toLowerCase())
+              if (isPersonName && OutputValidator.isNearDuplicateIdentity(val, existingValues)) {
+                console.warn(`[v0] Whole-record has a near-duplicate identity for ${field.name}: ${val}, falling back to field-by-field`)
+                rejectWholeRecord = true
+                break
               }
             }
-          } else {
-            hasDuplicateField = true // Force fallback
           }
 
-          if (!hasDuplicateField) {
+          if (!rejectWholeRecord) {
             // Use the whole record — copy values into record object
             // NOTE: Do NOT add to tracking set here — tracking is handled by
             // generateSingleRecordWithRetry after its own duplicate check passes
