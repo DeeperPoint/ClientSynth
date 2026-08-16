@@ -74,6 +74,7 @@ export function SchemaBuilder() {
     results: Array<{ fileName: string; status: 'success' | 'failed'; recordCount?: number }>
   } | null>(null)
   const [expandedLinkedFields, setExpandedLinkedFields] = useState<Set<string>>(new Set())
+  const [expandedConstraints, setExpandedConstraints] = useState<Set<string>>(new Set())
   const router = useRouter()
   // Use server APIs for auth and DB (Postgres)
 
@@ -566,6 +567,108 @@ export function SchemaBuilder() {
                       </div>
                     </div>
                     
+                    {/* Value Constraints — allowed options and numeric range.
+                        These are passed to the generator, which restricts output to
+                        the allowed set rather than filtering invalid values later. */}
+                    <div className="w-full mt-4">
+                      <Collapsible
+                        open={expandedConstraints.has(field.id)}
+                        onOpenChange={(open) => {
+                          const newSet = new Set(expandedConstraints)
+                          if (open) newSet.add(field.id)
+                          else newSet.delete(field.id)
+                          setExpandedConstraints(newSet)
+                        }}
+                      >
+                        <CollapsibleTrigger asChild>
+                          <Button variant="outline" size="sm" className="w-full justify-between" type="button">
+                            <span className="text-sm flex items-center gap-2">
+                              Value Constraints (Optional)
+                              {(field.constraints?.options?.length ?? 0) > 0 && (
+                                <Badge variant="secondary" className="text-xs">
+                                  {field.constraints!.options!.length} allowed value
+                                  {field.constraints!.options!.length === 1 ? "" : "s"}
+                                </Badge>
+                              )}
+                            </span>
+                            <ChevronDown className={`h-4 w-4 transition-transform ${expandedConstraints.has(field.id) ? "rotate-180" : ""}`} />
+                          </Button>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="mt-3 space-y-3 p-4 border rounded-md bg-muted/30">
+                          <div className="grid gap-2">
+                            <Label htmlFor={`field-options-${field.id}`} className="text-sm">
+                              Allowed values
+                            </Label>
+                            <Textarea
+                              id={`field-options-${field.id}`}
+                              placeholder={"One value per line, e.g.\nCanada\nUSA"}
+                              className="min-h-[90px] font-mono text-sm"
+                              value={(field.constraints?.options || []).join("\n")}
+                              onChange={(e) => {
+                                const options = e.target.value
+                                  .split("\n")
+                                  .map((o) => o.trim())
+                                  .filter(Boolean)
+                                updateField(field.id, {
+                                  constraints: {
+                                    ...field.constraints,
+                                    options: options.length > 0 ? options : undefined,
+                                  },
+                                })
+                              }}
+                              aria-describedby={`field-options-hint-${field.id}`}
+                            />
+                            <p id={`field-options-hint-${field.id}`} className="text-xs text-muted-foreground">
+                              Generation is restricted to these values, so records stay valid for the
+                              target marketplace. Leave empty for unrestricted generation.
+                            </p>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="grid gap-2">
+                              <Label htmlFor={`field-min-${field.id}`} className="text-sm">
+                                Minimum
+                              </Label>
+                              <Input
+                                id={`field-min-${field.id}`}
+                                type="number"
+                                placeholder="No minimum"
+                                value={field.constraints?.min ?? ""}
+                                onChange={(e) => {
+                                  const raw = e.target.value
+                                  updateField(field.id, {
+                                    constraints: {
+                                      ...field.constraints,
+                                      min: raw === "" ? undefined : Number(raw),
+                                    },
+                                  })
+                                }}
+                              />
+                            </div>
+                            <div className="grid gap-2">
+                              <Label htmlFor={`field-max-${field.id}`} className="text-sm">
+                                Maximum
+                              </Label>
+                              <Input
+                                id={`field-max-${field.id}`}
+                                type="number"
+                                placeholder="No maximum"
+                                value={field.constraints?.max ?? ""}
+                                onChange={(e) => {
+                                  const raw = e.target.value
+                                  updateField(field.id, {
+                                    constraints: {
+                                      ...field.constraints,
+                                      max: raw === "" ? undefined : Number(raw),
+                                    },
+                                  })
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </CollapsibleContent>
+                      </Collapsible>
+                    </div>
+
                     {/* Linked Fields Configuration */}
                     <div className="w-full mt-4">
                       <Collapsible
