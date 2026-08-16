@@ -20,11 +20,14 @@ export class GoogleFlashProvider extends BaseImageProvider {
     try {
       console.log("[GoogleFlashProvider] Generating image with prompt:", prompt)
 
-      // Initialize the Gemini 2.0 Flash model with image generation capability
-      const model = this.client.models.get(this.model)
-
-      // Generate image using Gemini 2.0 Flash native image generation
-      const result = await model.generateContent({
+      // Generate image using Gemini 2.0 Flash native image generation.
+      //
+      // `models.get(name)` resolves model *metadata* and has no
+      // generateContent method — calling it that way could never have worked.
+      // The generation entry point is `models.generateContent`, with the model
+      // named in the request.
+      const result = await this.client.models.generateContent({
+        model: this.model,
         contents: [
           {
             role: "user",
@@ -48,8 +51,13 @@ export class GoogleFlashProvider extends BaseImageProvider {
         throw new Error("No image data returned from Google Flash API")
       }
 
-      // Convert base64 image data to Buffer
+      // Convert base64 image data to Buffer. `data` is optional on the SDK
+      // type, so an inlineData part with no payload must be rejected rather
+      // than silently decoded into an empty buffer.
       const base64Data = imagePart.inlineData.data
+      if (!base64Data) {
+        throw new Error("No image data returned from Google Flash API")
+      }
       const buffer = Buffer.from(base64Data, "base64")
 
       console.log("[GoogleFlashProvider] Generated image successfully, size:", buffer.length, "bytes")

@@ -52,6 +52,7 @@ describe("POST /api/exports/create", () => {
       }])) // job lookup
     mockHasTenantAccess.mockResolvedValueOnce(true)
     mockQuery
+      .mockResolvedValueOnce(mockQueryResult([{ count: 10 }])) // generated_data count
       .mockResolvedValueOnce(mockQueryResult([{
         id: TEST_IDS.EXPORT,
         tenant_id: TEST_IDS.TENANT,
@@ -164,7 +165,9 @@ describe("POST /api/exports/create", () => {
     expect(status).toBe(403)
   })
 
-  it("should return 400 when job is not completed", async () => {
+  // A running job is exportable as long as it has produced records — partial
+  // export is deliberate. The 400 is about having nothing to export, not status.
+  it("should return 400 when the job has generated no records yet", async () => {
     mockGetCurrentUser.mockResolvedValueOnce(mockUser())
     mockQuery.mockResolvedValueOnce(mockQueryResult([{
       id: TEST_IDS.JOB,
@@ -173,6 +176,7 @@ describe("POST /api/exports/create", () => {
       status: "running",
     }]))
     mockHasTenantAccess.mockResolvedValueOnce(true)
+    mockQuery.mockResolvedValueOnce(mockQueryResult([{ count: 0 }])) // generated_data count
 
     const req = createNextRequest("POST", "http://localhost:3000/api/exports/create", {
       body: validBody,
@@ -182,6 +186,39 @@ describe("POST /api/exports/create", () => {
     const { status, body } = await parseResponse(res)
 
     expect(status).toBe(400)
-    expect(body.error).toContain("completed")
+    expect(body.error).toContain("No records generated yet")
+  })
+
+  it("should allow a partial export from a still-running job that has records", async () => {
+    mockGetCurrentUser.mockResolvedValueOnce(mockUser())
+    mockQuery.mockResolvedValueOnce(mockQueryResult([{
+      id: TEST_IDS.JOB,
+      tenant_id: TEST_IDS.TENANT,
+      name: "Test Job",
+      status: "running",
+    }]))
+    mockHasTenantAccess.mockResolvedValueOnce(true)
+    mockQuery
+      .mockResolvedValueOnce(mockQueryResult([{ count: 5 }])) // generated_data count
+      .mockResolvedValueOnce(mockQueryResult([{
+        id: TEST_IDS.EXPORT,
+        tenant_id: TEST_IDS.TENANT,
+        job_id: TEST_IDS.JOB,
+        name: "test-export",
+        format: "csv",
+      }])) // insert export
+
+    mockGenerateExport.mockResolvedValueOnce("full_name,email\nJohn,john@test.com")
+    mockGetContentType.mockReturnValueOnce("text/csv")
+    mockQuery.mockResolvedValueOnce(mockQueryResult([])) // update export
+
+    const req = createNextRequest("POST", "http://localhost:3000/api/exports/create", {
+      body: validBody,
+    })
+
+    const { status, body } = await parseResponse(await createExportRoute(req))
+
+    expect(status).toBe(200)
+    expect(body.success).toBe(true)
   })
 })

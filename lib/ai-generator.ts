@@ -6,6 +6,28 @@ export interface SchemaContext {
   allFields: Array<{ name: string; type: string; description?: string }>
 }
 
+/**
+ * A field as the generator sees it.
+ *
+ * `constraints.options` is the important one: when the schema restricts a field
+ * to a fixed set of values, the model must be told, otherwise it invents
+ * plausible-but-invalid values (e.g. generating "Kazakhstan" for a field whose
+ * target marketplace only accepts "Canada" or "USA") and every such record is
+ * rejected downstream at the population ingest boundary.
+ */
+export interface GenerationField {
+  name: string
+  type: string
+  description?: string
+  required?: boolean
+  constraints?: {
+    min?: number
+    max?: number
+    options?: string[]
+    format?: string
+  }
+}
+
 export interface GenerationContext {
   fieldType: string
   fieldName: string
@@ -329,16 +351,21 @@ export class AIGenerator {
     // Remove any text after comma that looks like an error message
     cleaned = cleaned.replace(/,\s*(cannot|error|failed|invalid|unable)[^.]*/gi, '')
     
-    // Remove trailing numbers and timestamps added by fallback generation (e.g., "Australia_11_1763030500331")
-    cleaned = cleaned.replace(/_\d+_\d+$/g, '') // Remove _number_timestamp pattern
-    cleaned = cleaned.replace(/_\d{13}$/g, '') // Remove _timestamp (13 digits)
-    cleaned = cleaned.replace(/_\d+$/g, '') // Remove trailing _number (but be careful - might remove valid suffixes)
+    // Remove trailing numbers and timestamps added by fallback generation (e.g., "Australia_11_1763030500331").
+    // Scoped deliberately: a bare trailing "_<number>" is a legitimate suffix in
+    // plenty of real values (model numbers, lot codes), so only the
+    // index+timestamp and bare-timestamp artefacts are stripped.
+    cleaned = cleaned.replace(/_\d{1,3}_\d{10,}$/g, '') // _index_timestamp
+    cleaned = cleaned.replace(/_\d{13}$/g, '') // _timestamp (13 digits)
     
     // Remove any remaining error messages or JSON markers
     cleaned = cleaned.replace(/^error[\s:]*/i, '')
     cleaned = cleaned.replace(/^json[\s:]*/i, '')
     cleaned = cleaned.replace(/\{[^}]*\}/g, '') // Remove any remaining JSON objects
-    cleaned = cleaned.replace(/\[[^\]]*\]/g, '') // Remove any remaining JSON arrays
+    // Only strip a bracketed span when it looks like a leftover JSON array
+    // (quoted items or a list of numbers) — bare brackets appear in legitimate
+    // prose such as "Grade A [certified]" and were being deleted wholesale.
+    cleaned = cleaned.replace(/\[\s*(?:"[^"]*"|'[^']*'|-?\d+(?:\.\d+)?)(?:\s*,\s*(?:"[^"]*"|'[^']*'|-?\d+(?:\.\d+)?))*\s*\]/g, '')
     
     // Remove trailing commas and clean up
     cleaned = cleaned.replace(/,\s*$/, '').trim()
@@ -554,20 +581,87 @@ IMPORTANT:
    * Generate an entire record in a single LLM call for better cross-field consistency.
    * Falls back to null if the model fails, so callers should use field-by-field as fallback.
    */
+  /**
+   * Map a schema field onto its JSON-schema type for structured output.
+   * `enum` is what actually prevents out-of-vocabulary values.
+   */
+  private jsonSchemaForField(field: GenerationField): Record<string, any> {
+    const type = (field.type || 'text').toLowerCase()
+    const options = field.constraints?.options
+
+    if (options && options.length > 0) {
+      // Multi-valued fields carry a list of allowed values, not one of them.
+      if (['multi_select', 'multiselect', 'tags', 'list'].includes(type)) {
+        return { type: 'array', items: { type: 'string', enum: options }, minItems: 1 }
+      }
+      return { type: 'string', enum: options }
+    }
+
+    switch (type) {
+      case 'number':
+      case 'integer':
+      case 'float': {
+        const schema: Record<string, any> = { type: type === 'integer' ? 'integer' : 'number' }
+        if (typeof field.constraints?.min === 'number') schema.minimum = field.constraints.min
+        if (typeof field.constraints?.max === 'number') schema.maximum = field.constraints.max
+        return schema
+      }
+      case 'boolean':
+        return { type: 'boolean' }
+      case 'multi_select':
+      case 'multiselect':
+      case 'tags':
+      case 'list':
+        return { type: 'array', items: { type: 'string' }, minItems: 1 }
+      default:
+        return { type: 'string' }
+    }
+  }
+
+  /**
+   * Size the token budget by what the fields actually need.
+   *
+   * A flat 80 tokens per field truncated long-text schemas mid-JSON, which
+   * failed to parse and silently dropped the whole record to the much slower
+   * field-by-field path — losing the cross-field consistency that whole-record
+   * generation exists to provide.
+   */
+  private estimateMaxTokens(fields: GenerationField[]): number {
+    const perField = (f: GenerationField): number => {
+      const type = (f.type || 'text').toLowerCase()
+      if (['long_text', 'description', 'rich_text', 'textarea'].includes(type)) return 320
+      if (['address', 'text'].includes(type)) return 60
+      if (['number', 'integer', 'float', 'boolean', 'date'].includes(type)) return 20
+      if (['multi_select', 'multiselect', 'tags', 'list'].includes(type)) return 80
+      return 40
+    }
+    const content = fields.reduce((sum, f) => sum + perField(f) + f.name.length / 2, 0)
+    // Headroom for JSON punctuation and key names, with a floor and a ceiling.
+    return Math.min(16000, Math.max(500, Math.ceil(content * 1.4)))
+  }
+
   async generateRecord(
-    fields: Array<{ name: string; type: string; description?: string }>,
+    fields: GenerationField[],
     schemaContext: SchemaContext,
     recordIndex: number,
     personaContext?: PersonaContext,
     previousRecords?: Record<string, any>[],
     seedRules?: import("./types/schema-extensions").SeedRule[],
-  ): Promise<Record<string, string> | null> {
+  ): Promise<Record<string, any> | null> {
     const textFields = fields.filter(f => !['image', 'pdf'].includes(f.type.toLowerCase()))
     if (textFields.length === 0) return null
 
     const fieldDescriptions = textFields.map(f => {
       let desc = `- "${f.name}" (type: ${f.type})`
       if (f.description) desc += `: ${f.description}`
+      const options = f.constraints?.options
+      if (options && options.length > 0) {
+        desc += `\n    ALLOWED VALUES — you MUST choose from exactly this list: ${options.map(o => `"${o}"`).join(', ')}`
+      }
+      const { min, max } = f.constraints || {}
+      if (typeof min === 'number' || typeof max === 'number') {
+        desc += `\n    Range: ${typeof min === 'number' ? `min ${min}` : 'no minimum'}, ${typeof max === 'number' ? `max ${max}` : 'no maximum'}`
+      }
       return desc
     }).join('\n')
 
@@ -583,9 +677,16 @@ CRITICAL FORMAT RULES:
 - country: Use full unabbreviated names like "United States", "United Kingdom". NEVER truncate.
 - number fields: Return realistic values appropriate for the field description. NEVER return negative values unless explicitly required.
 - email: Use realistic professional email format derived from the person's UNIQUE name for this record.
-- contact/person names: Generate a COMPLETELY UNIQUE full name. Use diverse name origins (European, Asian, African, Latin American, Middle Eastern). NEVER repeat names from previous records.
+- contact/person names: Generate a COMPLETELY UNIQUE full name — a different given name AND a different family name from every previous record. Variations of the same person (e.g. "Jane Vance", "Jane S. Vance", "Jane Vance-Smith") count as REPEATS and are not allowed. Use diverse name origins (European, Asian, African, Latin American, Middle Eastern).
 - All text fields: Generate meaningful, domain-relevant content. No trailing numbers or random suffixes.
-- Return ONLY a JSON object with field names as keys and generated values as string values.`
+- ALLOWED VALUES: where a field lists allowed values, the value MUST be copied exactly from that list. Do not invent alternatives, synonyms, or values outside the list.
+
+GEOGRAPHIC CONSISTENCY (all location-bearing fields must describe the SAME place):
+- The country field, the address, the region/state, the phone country/area code, and any country hint in the email domain must all agree with one another.
+- Pick the country FIRST, then derive the address, region, postal-code format and phone code from it.
+- Example of a WRONG record: country "United States" with an address in Ontario, a "+1 (519)" Ontario area code and a ".ca" email domain.
+
+Return ONLY a JSON object with field names as keys.`
 
     if (personaContext && Object.keys(personaContext).length > 0) {
       systemPrompt += `\n\nThematic Background: ${this.formatPersonaContext(personaContext)}. Use this for domain context (industry, region, culture) but generate a UNIQUE person identity (name, email, phone) for each record. Do NOT reuse persona names.`
@@ -606,81 +707,155 @@ CRITICAL FORMAT RULES:
       userPrompt += `\n\nPrevious records (DO NOT duplicate these):\n${prevSummary}`
     }
 
-    // Build JSON schema for structured output
+    // Build JSON schema for structured output.
+    //
+    // Typing every field as `string` (the previous behaviour) meant numbers came
+    // back as "640" and option fields were unconstrained. Declaring the real
+    // type — and an `enum` where the schema restricts values — makes invalid
+    // output structurally impossible rather than something to detect later.
     const properties: Record<string, any> = {}
     const required: string[] = []
     for (const f of textFields) {
-      properties[f.name] = { type: "string" }
+      properties[f.name] = this.jsonSchemaForField(f)
       required.push(f.name)
     }
 
-    const maxTokens = Math.max(300, textFields.length * 80)
+    const maxTokens = this.estimateMaxTokens(textFields)
 
-    try {
-      console.log(`[AIGenerator] Generating whole record with ${textFields.length} fields in single call`)
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": process.env.OPENROUTER_SITE_URL || "http://localhost:3000",
-          "X-Title": process.env.OPENROUTER_APP_TITLE || "ClientSynth",
-        },
-        body: JSON.stringify({
-          model: this.model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-          max_tokens: maxTokens,
-          temperature: 0.9,
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: "record_data",
-              strict: true,
-              schema: {
-                type: "object",
-                properties,
-                required,
-                additionalProperties: false,
+    // A transient truncation or parse failure used to drop the whole record to
+    // the field-by-field path, which generates each field in isolation and so
+    // cannot keep country/address/phone consistent. One bounded retry keeps far
+    // more records on the consistent path.
+    const MAX_ATTEMPTS = 2
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        console.log(
+          `[AIGenerator] Generating whole record with ${textFields.length} fields in single call ` +
+          `(attempt ${attempt}/${MAX_ATTEMPTS}, max_tokens=${maxTokens})`
+        )
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": process.env.OPENROUTER_SITE_URL || "http://localhost:3000",
+            "X-Title": process.env.OPENROUTER_APP_TITLE || "ClientSynth",
+          },
+          body: JSON.stringify({
+            model: this.model,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt },
+            ],
+            max_tokens: maxTokens,
+            temperature: 0.9,
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: "record_data",
+                strict: true,
+                schema: {
+                  type: "object",
+                  properties,
+                  required,
+                  additionalProperties: false,
+                },
               },
             },
-          },
-        }),
-      })
+          }),
+        })
 
-      if (!response.ok) {
-        const errorText = await response.text()
-        console.error(`[AIGenerator] Whole-record API error: ${response.status}`, errorText)
+        if (!response.ok) {
+          const errorText = await response.text()
+          console.error(`[AIGenerator] Whole-record API error: ${response.status}`, errorText)
+          // 4xx other than rate limiting will not succeed on retry.
+          if (response.status < 500 && response.status !== 429) return null
+          continue
+        }
+
+        const data = await response.json()
+        const choice = data.choices?.[0]
+        const content = choice?.message?.content?.trim()
+
+        if (!content) {
+          console.warn('[AIGenerator] Whole-record returned empty content')
+          continue
+        }
+        if (choice?.finish_reason === 'length') {
+          console.warn(`[AIGenerator] Whole-record truncated (finish_reason=length) at max_tokens=${maxTokens}`)
+          continue
+        }
+
+        let parsed: Record<string, any>
+        try {
+          parsed = JSON.parse(content)
+        } catch {
+          console.warn(`[AIGenerator] Whole-record produced unparseable JSON (${content.length} chars)`)
+          continue
+        }
+
+        const cleaned = this.normalizeRecordValues(parsed, textFields)
+        if (!cleaned) continue
+
+        console.log(`[AIGenerator] Whole-record generated successfully with ${Object.keys(cleaned).length} fields`)
+        return cleaned
+      } catch (error) {
+        console.error(`[AIGenerator] Whole-record generation attempt ${attempt} failed:`, error)
+      }
+    }
+
+    console.warn(`[AIGenerator] Whole-record generation exhausted ${MAX_ATTEMPTS} attempts`)
+    return null
+  }
+
+  /**
+   * Validate and tidy a parsed whole-record response, preserving declared types.
+   * Returns null when a required field is missing, so the caller can retry.
+   */
+  private normalizeRecordValues(
+    parsed: Record<string, any>,
+    fields: GenerationField[],
+  ): Record<string, any> | null {
+    const out: Record<string, any> = {}
+
+    for (const f of fields) {
+      const value = parsed[f.name]
+
+      if (value === null || value === undefined) {
+        console.warn(`[AIGenerator] Whole-record missing field: ${f.name}`)
         return null
       }
 
-      const data = await response.json()
-      const content = data.choices?.[0]?.message?.content?.trim()
-      if (!content) {
-        console.warn('[AIGenerator] Whole-record returned empty content')
-        return null
+      // Preserve non-string types produced by the structured-output schema —
+      // stringifying them here is what previously turned 640 into "640".
+      if (typeof value === 'number' || typeof value === 'boolean') {
+        out[f.name] = value
+        continue
       }
 
-      const parsed = JSON.parse(content)
-      
-      // Validate all fields are present and non-empty
-      for (const f of textFields) {
-        if (!parsed[f.name] || String(parsed[f.name]).trim().length === 0) {
-          console.warn(`[AIGenerator] Whole-record missing field: ${f.name}`)
+      if (Array.isArray(value)) {
+        const items = value.map(v => String(v).trim()).filter(Boolean)
+        if (items.length === 0) {
+          console.warn(`[AIGenerator] Whole-record has empty array for field: ${f.name}`)
           return null
         }
-        // Clean trailing artifacts
-        parsed[f.name] = String(parsed[f.name]).replace(/_\d+(_\d+)?$/g, '').trim()
+        out[f.name] = items
+        continue
       }
 
-      console.log(`[AIGenerator] Whole-record generated successfully with ${Object.keys(parsed).length} fields`)
-      return parsed
-    } catch (error) {
-      console.error('[AIGenerator] Whole-record generation failed:', error)
-      return null
+      const str = String(value).trim()
+      if (str.length === 0) {
+        console.warn(`[AIGenerator] Whole-record has empty value for field: ${f.name}`)
+        return null
+      }
+
+      // Strip the "_12_1763030500331" index/timestamp artefact left by fallback
+      // generation, without touching legitimate identifiers such as "CAN-ON-772891".
+      out[f.name] = str.replace(/_\d{1,3}_\d{10,}$/g, '').replace(/_\d{13}$/g, '').trim()
     }
+
+    return out
   }
 
   async generatePDFField(context: PDFGenerationContext): Promise<{ url: string; s3Key: string }> {

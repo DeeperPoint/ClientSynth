@@ -21,6 +21,8 @@ import {
   CheckCircle,
   Clock,
   Zap,
+  Users,
+  Share2,
 } from "lucide-react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
@@ -99,7 +101,26 @@ const EXPORT_FORMATS = [
     maxRecords: 10000000,
     recommended: false,
   },
+  {
+    value: "population",
+    label: "Cosolvent Population",
+    description: "Watermarked synthetic population file for Cosolvent ingest",
+    icon: Users,
+    maxRecords: 100000,
+    recommended: false,
+  },
+  {
+    value: "cosolvent",
+    label: "Cosolvent Live Stream",
+    description: "Register records directly with a running Cosolvent instance",
+    icon: Share2,
+    maxRecords: 100000,
+    recommended: false,
+  },
 ]
+
+/** Formats that push to Cosolvent rather than producing a plain data file. */
+const COSOLVENT_FORMATS = ["population", "cosolvent"]
 
 export default function ExportPage() {
   const [job, setJob] = useState<Job | null>(null)
@@ -112,6 +133,16 @@ export default function ExportPage() {
   const [format, setFormat] = useState("csv")
   const [selectedFields, setSelectedFields] = useState<string[]>([])
   const [recordLimit, setRecordLimit] = useState("")
+
+  // Cosolvent population export (GAP-10/9)
+  const [targetSchemaText, setTargetSchemaText] = useState("")
+  const [populationMode, setPopulationMode] = useState<"demo" | "production">("demo")
+  const [cosolventBaseUrl, setCosolventBaseUrl] = useState("")
+  const [populationResult, setPopulationResult] = useState<{
+    stats: Record<string, number>
+    rejected: Array<{ recordIndex: number; externalId: string; reasons: string[] }>
+  } | null>(null)
+  const [formError, setFormError] = useState<string | null>(null)
 
   const params = useParams()
   // Use Postgres-backed API endpoints
@@ -187,15 +218,37 @@ export default function ExportPage() {
     if (!job || !exportName.trim() || !format) return
 
     setIsExporting(true)
+    setFormError(null)
+    setPopulationResult(null)
     try {
       const filters: any = {}
 
-      if (selectedFields.length > 0) {
+      // Field selection narrows a data file, but a population record must match
+      // the target profile schema — sending a subset would fail validation.
+      if (selectedFields.length > 0 && !COSOLVENT_FORMATS.includes(format)) {
         filters.fields = selectedFields
       }
 
       if (recordLimit && Number.parseInt(recordLimit) > 0) {
         filters.limit = Number.parseInt(recordLimit)
+      }
+
+      if (format === "population") {
+        filters.mode = populationMode
+        if (targetSchemaText.trim()) {
+          try {
+            filters.targetSchema = JSON.parse(targetSchemaText)
+          } catch {
+            throw new Error(
+              "The target schema is not valid JSON. Generate it with Cosolvent's " +
+                "`python -m cli export-profile-schema <type>`.",
+            )
+          }
+        }
+      }
+
+      if (format === "cosolvent" && cosolventBaseUrl.trim()) {
+        filters.cosolventBaseUrl = cosolventBaseUrl.trim()
       }
 
       const response = await fetch("/api/exports/create", {
@@ -215,6 +268,12 @@ export default function ExportPage() {
         throw new Error(result.error || "Failed to create export")
       }
 
+      // Surface how many records passed the population validity gate, and why
+      // any were held back — otherwise a partial export looks like a success.
+      if (result.populationStats) {
+        setPopulationResult({ stats: result.populationStats, rejected: result.rejected || [] })
+      }
+
       // Reload exports
       await loadJobAndExports()
 
@@ -224,7 +283,7 @@ export default function ExportPage() {
       setRecordLimit("")
     } catch (error) {
       console.error("Error creating export:", error)
-      alert("Failed to create export. Please try again.")
+      setFormError(error instanceof Error ? error.message : "Failed to create export. Please try again.")
     } finally {
       setIsExporting(false)
     }
@@ -233,9 +292,13 @@ export default function ExportPage() {
   const downloadExport = (exportRecord: ExportRecord) => {
     if (!exportRecord.file_url) return
 
+    // The format name is not always the file extension — a population export is
+    // a JSON file, so ".population" would download something unopenable.
+    const extension = exportRecord.format === "population" ? "json" : exportRecord.format
+
     const link = document.createElement("a")
     link.href = exportRecord.file_url
-    link.download = `${exportRecord.name}.${exportRecord.format}`
+    link.download = `${exportRecord.name}.${extension}`
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
@@ -277,6 +340,14 @@ export default function ExportPage() {
       case "parquet":
         bytesPerRecord = fieldCount * 15 // Columnar compression
         break
+      case "population":
+        // Every field is exported (selection does not apply) plus the watermark
+        // block, so estimate from the schema rather than the selected subset.
+        bytesPerRecord = (job?.schemas?.schema_definition?.fields?.length || fieldCount) * 45 + 160
+        break
+      case "cosolvent":
+        bytesPerRecord = 0 // Streamed to a live instance; no file is produced
+        break
     }
 
     const totalBytes = recordCount * bytesPerRecord
@@ -295,6 +366,10 @@ export default function ExportPage() {
         sql: 5000,
         xml: 4000,
         parquet: 6000,
+        // Signing an HMAC per record, then validating it against the profile schema.
+        population: 4000,
+        // Bound by a network round-trip to Cosolvent per record, not by local work.
+        cosolvent: 50,
       }[format] || 5000
 
     const seconds = Math.ceil(recordCount / recordsPerSecond)
@@ -508,9 +583,108 @@ export default function ExportPage() {
                   <p className="text-xs text-gray-500">Leave empty to export all records</p>
                 </div>
 
+                {format === "population" && (
+                  <div className="space-y-4 rounded-lg border border-purple-200 bg-purple-50/50 p-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="population-mode">Mode</Label>
+                      <select
+                        id="population-mode"
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        value={populationMode}
+                        onChange={(e) => setPopulationMode(e.target.value as "demo" | "production")}
+                      >
+                        <option value="demo">Demo — watermark every record (synthetic)</option>
+                        <option value="production">Production — no watermark (clean cutover)</option>
+                      </select>
+                      <p className="text-xs text-gray-500">
+                        {populationMode === "demo"
+                          ? "Cosolvent requires a valid synthetic watermark in demo mode."
+                          : "Cosolvent rejects watermarked records in production mode."}
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="target-schema">Target profile schema (optional)</Label>
+                      <textarea
+                        id="target-schema"
+                        className="h-32 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs"
+                        value={targetSchemaText}
+                        onChange={(e) => setTargetSchemaText(e.target.value)}
+                        placeholder={'{\n  "participantType": "producer",\n  "fields": [ ... ]\n}'}
+                      />
+                      <p className="text-xs text-gray-500">
+                        Paste the descriptor from Cosolvent&apos;s{" "}
+                        <code className="rounded bg-gray-100 px-1">
+                          python -m cli export-profile-schema &lt;type&gt;
+                        </code>
+                        . With it, values are coerced to the marketplace&apos;s field types and
+                        schema violations are caught here instead of at ingest.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {format === "cosolvent" && (
+                  <div className="space-y-2 rounded-lg border border-teal-200 bg-teal-50/50 p-4">
+                    <Label htmlFor="cosolvent-url">Cosolvent base URL</Label>
+                    <Input
+                      id="cosolvent-url"
+                      value={cosolventBaseUrl}
+                      onChange={(e) => setCosolventBaseUrl(e.target.value)}
+                      placeholder="http://localhost:8003"
+                    />
+                    <p className="text-xs text-gray-500">
+                      Streams each record to a running instance. Falls back to the
+                      COSOLVENT_BASE_URL environment variable when left empty.
+                    </p>
+                  </div>
+                )}
+
+                {formError && (
+                  <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>{formError}</span>
+                  </div>
+                )}
+
+                {populationResult && (
+                  <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm">
+                    <div className="font-medium">
+                      Exported {populationResult.stats.exported} of {populationResult.stats.total} record(s)
+                    </div>
+                    <div className="text-xs text-gray-600">
+                      coerced {populationResult.stats.coerced} &middot; dropped fields{" "}
+                      {populationResult.stats.droppedFields} &middot; warnings {populationResult.stats.warnings}
+                    </div>
+                    {populationResult.rejected.length > 0 && (
+                      <div className="space-y-1">
+                        <div className="text-xs font-medium text-amber-700">
+                          {populationResult.rejected.length} record(s) held back:
+                        </div>
+                        <ul className="space-y-0.5 text-xs text-amber-700">
+                          {populationResult.rejected.slice(0, 5).map((r) => (
+                            <li key={r.externalId}>
+                              #{r.recordIndex} {r.externalId}: {r.reasons.join("; ")}
+                            </li>
+                          ))}
+                        </ul>
+                        {populationResult.rejected.length > 5 && (
+                          <div className="text-xs text-gray-500">
+                            ...and {populationResult.rejected.length - 5} more
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <Button
                   onClick={createExport}
-                  disabled={isExporting || !exportName.trim() || selectedFields.length === 0}
+                  disabled={
+                    isExporting ||
+                    !exportName.trim() ||
+                    (selectedFields.length === 0 && !COSOLVENT_FORMATS.includes(format))
+                  }
                   className="w-full bg-gradient-to-r from-purple-600 to-teal-500 hover:from-purple-700 hover:to-teal-700"
                 >
                   {isExporting ? (

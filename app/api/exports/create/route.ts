@@ -18,9 +18,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate format
-    const validFormats = ["csv", "json", "xlsx", "sql", "xml", "parquet", "cosolvent"]
+    const validFormats = ["csv", "json", "xlsx", "sql", "xml", "parquet", "cosolvent", "population"]
     if (!validFormats.includes(format)) {
-      return NextResponse.json({ error: "Invalid format. Must be one of: csv, json, xlsx, sql, xml, parquet, cosolvent" }, { status: 400 })
+      return NextResponse.json({ error: "Invalid format. Must be one of: csv, json, xlsx, sql, xml, parquet, cosolvent, population" }, { status: 400 })
     }
 
     // Get job to validate access and get tenant_id
@@ -87,6 +87,47 @@ export async function POST(request: NextRequest) {
           success: true,
           export: { ...exportRecord, status: "completed", file_url: null, record_count: result.totalSent },
           cosolventStats: result
+        })
+      }
+
+      // C0 synthetic population file for Cosolvent ingest (GAP-10/9).
+      // Produces a downloadable, watermarked file rather than streaming to a
+      // live endpoint, so the population can be reviewed before it is loaded.
+      if (format === 'population') {
+        const { exportJobPopulation, parseTargetSchema } = await import("@/lib/population/job-population-service")
+        const { serializePopulation } = await import("@/lib/population/population-export")
+
+        const result = await exportJobPopulation(job_id, {
+          targetSchema: filters.targetSchema ? parseTargetSchema(filters.targetSchema) : undefined,
+          participantType: filters.participantType,
+          mode: filters.mode === 'production' ? 'production' : 'demo',
+          strict: filters.allowInvalid !== true,
+          limit: filters.limit,
+          offset: filters.offset,
+        })
+
+        if (result.stats.exported === 0) {
+          throw new Error(
+            `No records passed the population validity gate (${result.stats.rejected} rejected). ` +
+            `First reasons: ${result.rejected.slice(0, 3).map(r => r.reasons.join('; ')).join(' | ')}`
+          )
+        }
+
+        const content = serializePopulation(result.file)
+        const fileSize = Buffer.byteLength(content, 'utf8')
+        const dataUrl = `data:application/json;base64,${Buffer.from(content).toString("base64")}`
+
+        await query(`
+          UPDATE exports
+          SET status = 'completed', file_url = $1, file_size = $2, record_count = $3, updated_at = NOW()
+          WHERE id = $4
+        `, [dataUrl, fileSize, result.stats.exported, exportRecord.id])
+
+        return NextResponse.json({
+          success: true,
+          export: { ...exportRecord, status: "completed", file_url: dataUrl, record_count: result.stats.exported },
+          populationStats: result.stats,
+          rejected: result.rejected,
         })
       }
 

@@ -28,3 +28,7 @@ next-env.d.ts
 
 # python environments
 .venv/
+
+# generated population-export artifacts (regenerate with scripts/export-population.ts)
+population*.json
+*.schema.json

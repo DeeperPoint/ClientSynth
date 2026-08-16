@@ -7,12 +7,25 @@ import { S3Uploader } from './s3-uploader'
  * Resolves the correct Python command to use.
  * Tries 'python3', 'python', and 'py' in that order.
  */
-function resolvePythonCommand(): string {
+/** Matches the `-V` banner: "Python 3.11.6". Python 2 prints it on stderr. */
+const PYTHON_VERSION_BANNER = /^Python \d+\.\d+/m
+
+export function resolvePythonCommand(): string {
   const candidates = ['python3', 'python', 'py']
   for (const cmd of candidates) {
     try {
       const res = spawnSync(cmd, ['-V'], { timeout: 2000, stdio: 'pipe' })
-      if (res.status === 0 || (res.stderr && res.stderr.toString().length > 0)) {
+      if (res.error) continue
+
+      // Require an actual version banner.
+      //
+      // Accepting "any stderr output" used to select Windows' Microsoft Store
+      // alias for `python3`, which exits 9009 and prints "Python was not
+      // found..." to stderr. Detection stopped at that stub and never tried
+      // the working `python` on the same machine, so PDF generation failed
+      // with the Store message as its error.
+      const output = `${res.stdout?.toString() ?? ''}\n${res.stderr?.toString() ?? ''}`
+      if (PYTHON_VERSION_BANNER.test(output)) {
         console.log(`[PDFGenerator] Using Python command: ${cmd}`)
         return cmd
       }

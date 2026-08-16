@@ -1,20 +1,32 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from '@jest/globals'
+/**
+ * @jest-environment node
+ */
+import { describe, it, expect, beforeEach } from '@jest/globals'
 import { query, getCurrentUser } from '@/lib/postgres/client'
-import { S3Uploader } from '@/lib/s3-uploader'
-import { LocalFileStorage } from '@/lib/local-file-storage'
 
-// Mock dependencies
+// Explicit mock factories.
+//
+// `jest.mock('@/lib/s3-uploader')` on its own does not produce a mock
+// constructor under next/jest — the imported class comes through as a plain
+// function, so `S3Uploader.mockImplementation(...)` threw
+// "mockImplementation is not a function" and took every test in the file with
+// it. Declaring the shape here keeps the uploads in-memory and deterministic.
+const mockS3Upload = jest.fn()
+const mockLocalUpload = jest.fn()
+
 jest.mock('@/lib/postgres/client', () => ({
   query: jest.fn(),
   getCurrentUser: jest.fn()
 }))
-jest.mock('@/lib/s3-uploader')
-jest.mock('@/lib/local-file-storage')
+jest.mock('@/lib/s3-uploader', () => ({
+  S3Uploader: jest.fn().mockImplementation(() => ({ uploadFile: mockS3Upload }))
+}))
+jest.mock('@/lib/local-file-storage', () => ({
+  LocalFileStorage: jest.fn().mockImplementation(() => ({ uploadFile: mockLocalUpload }))
+}))
 
 const mockGetCurrentUser = getCurrentUser as jest.MockedFunction<typeof getCurrentUser>
 const mockQuery = query as jest.MockedFunction<typeof query>
-const mockS3Uploader = S3Uploader as jest.MockedClass<typeof S3Uploader>
-const mockLocalStorage = LocalFileStorage as jest.MockedClass<typeof LocalFileStorage>
 
 describe('Bulk Upload API', () => {
   const mockUser = {
@@ -36,14 +48,39 @@ describe('Bulk Upload API', () => {
 
   const mockFiles = [
     new File(['name,email\nJohn Doe,john@example.com\nJane Smith,jane@example.com'], 'test1.csv', { type: 'text/csv' }),
-    new File(['{"name": "John Doe", "email": "john@example.com"}'], 'test2.json', { type: 'application/json' })
+    // The route requires an array of objects; a bare object is rejected with
+    // "JSON file must contain an array of objects", which is correct behaviour.
+    new File(
+      ['[{"name": "John Doe", "email": "john@example.com"}, {"name": "Jane Smith", "email": "jane@example.com"}]'],
+      'test2.json',
+      { type: 'application/json' }
+    )
   ]
 
-  beforeAll(() => {
-    // Setup mocks
+  // Re-established per test: beforeEach clears mocks, so setting these once in
+  // a beforeAll left later tests running against emptied mocks.
+  beforeEach(() => {
+    jest.clearAllMocks()
+
+    mockS3Upload.mockResolvedValue({
+      key: 'test-key',
+      bucket: 'test-bucket',
+      url: 'https://test-bucket.s3.amazonaws.com/test-key'
+    })
+    mockLocalUpload.mockResolvedValue({
+      key: 'local-key',
+      bucket: 'local-storage',
+      url: 'http://localhost:3000/api/files/local-key'
+    })
+
     mockGetCurrentUser.mockResolvedValue(mockUser as any)
 
-    mockQuery.mockImplementation(async (sql: string, params: any[]) => {
+    // The route's SQL is multi-line, so matching against a single-spaced
+    // string never fired — the schema lookup silently returned no rows and the
+    // upload 404'd. Collapse whitespace before matching.
+    mockQuery.mockImplementation(async (rawSql: string, params?: any[]) => {
+      const sql = rawSql.replace(/\s+/g, ' ').trim()
+
       // Mock schema lookup
       if (sql.includes('SELECT s.*, t.id as tenant_id FROM schemas s')) {
         return { rows: [mockSchema] }
@@ -77,29 +114,6 @@ describe('Bulk Upload API', () => {
       return { rows: [] }
     })
 
-    // Mock S3 uploader
-    const mockS3Instance = {
-      uploadFile: jest.fn().mockResolvedValue({
-        key: 'test-key',
-        bucket: 'test-bucket',
-        url: 'https://test-bucket.s3.amazonaws.com/test-key'
-      })
-    }
-    mockS3Uploader.mockImplementation(() => mockS3Instance as any)
-
-    // Mock local storage
-    const mockLocalInstance = {
-      uploadFile: jest.fn().mockResolvedValue({
-        key: 'local-key',
-        bucket: 'local-storage',
-        url: 'http://localhost:3000/api/files/local-key'
-      })
-    }
-    mockLocalStorage.mockImplementation(() => mockLocalInstance as any)
-  })
-
-  beforeEach(() => {
-    jest.clearAllMocks()
   })
 
   describe('POST /api/schemas/[id]/examples/bulk-upload', () => {
@@ -187,12 +201,8 @@ describe('Bulk Upload API', () => {
     })
 
     it('should handle schema not found', async () => {
-      mockQuery.mockImplementationOnce(async (sql: string, params: any[]) => {
-        if (sql.includes('SELECT s.*, t.id as tenant_id FROM schemas s')) {
-          return { rows: [] }
-        }
-        return { rows: [] }
-      })
+      // No schema row for the lookup -> 404.
+      mockQuery.mockImplementationOnce(async () => ({ rows: [] }))
 
       const formData = new FormData()
       mockFiles.forEach(file => formData.append('files', file))
@@ -226,8 +236,8 @@ describe('Bulk Upload API', () => {
         }
       ]
 
-      mockQuery.mockImplementationOnce(async (sql: string, params: any[]) => {
-        if (sql.includes('SELECT ef.id, ef.file_name')) {
+      mockQuery.mockImplementationOnce(async (rawSql: string, params?: any[]) => {
+        if (rawSql.replace(/\s+/g, ' ').includes('FROM example_files ef')) {
           return { rows: mockUploads }
         }
         return { rows: [] }
@@ -253,18 +263,11 @@ describe('Bulk Upload Retry API', () => {
     email: 'test@example.com'
   }
 
-  beforeAll(() => {
-    mockCreateClient.mockResolvedValue({
-      auth: {
-        getUser: jest.fn().mockResolvedValue({
-          data: { user: mockUser }
-        })
-      }
-    } as any)
-  })
-
+  // Auth comes from getCurrentUser (Postgres); the old Supabase createClient
+  // mock this block used no longer exists.
   beforeEach(() => {
     jest.clearAllMocks()
+    mockGetCurrentUser.mockResolvedValue(mockUser as any)
   })
 
   describe('POST /api/schemas/[id]/examples/bulk-upload/retry', () => {
@@ -278,7 +281,8 @@ describe('Bulk Upload Retry API', () => {
         }
       ]
 
-      mockQuery.mockImplementation(async (sql: string, params: any[]) => {
+      mockQuery.mockImplementation(async (rawSql: string, params?: any[]) => {
+        const sql = rawSql.replace(/\s+/g, ' ').trim()
         if (sql.includes('SELECT buf.*, ef.file_name')) {
           return { rows: mockFailedFiles }
         }
@@ -307,12 +311,7 @@ describe('Bulk Upload Retry API', () => {
     })
 
     it('should handle no failed files found', async () => {
-      mockQuery.mockImplementationOnce(async (sql: string, params: any[]) => {
-        if (sql.includes('SELECT buf.*, ef.file_name')) {
-          return { rows: [] }
-        }
-        return { rows: [] }
-      })
+      mockQuery.mockImplementationOnce(async () => ({ rows: [] }))
 
       const request = new Request('http://localhost:3000/api/schemas/schema-123/examples/bulk-upload/retry', {
         method: 'POST',

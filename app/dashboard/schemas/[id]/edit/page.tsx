@@ -21,6 +21,18 @@ interface Field {
   type: string
   description: string
   required: boolean
+  /**
+   * Value constraints — allowed options for select fields, and numeric/length
+   * bounds. Populated by schema discovery and consumed by generation as an
+   * enum, so they must survive an edit round-trip untouched.
+   */
+  constraints?: {
+    min?: number
+    max?: number
+    options?: string[]
+    format?: string
+  }
+  linkedFieldConfig?: any
 }
 
 interface Schema {
@@ -29,6 +41,8 @@ interface Schema {
   description: string
   schema_definition: {
     fields: Field[]
+    metadata?: Record<string, any>
+    [key: string]: any
   }
 }
 
@@ -153,14 +167,11 @@ export default function EditSchemaPage() {
         setName(schemaData.name)
         setDescription(schemaData.description || '')
         
-        // CRITICAL: Create completely new array and update state
-        const newFields = fieldsWithIds.map((f, i) => ({
-          id: f.id,
-          name: f.name,
-          type: f.type,
-          description: f.description,
-          required: f.required
-        }))
+        // CRITICAL: Create completely new array and update state.
+        // Spread the whole field: listing keys explicitly here silently dropped
+        // constraints (discovered option sets) and linkedFieldConfig, which the
+        // save below would then write back as lost.
+        const newFields = fieldsWithIds.map((f: Field) => ({ ...f }))
         
         // Update ref FIRST
         fieldsRef.current = newFields
@@ -389,9 +400,17 @@ export default function EditSchemaPage() {
         }
       }
 
-      // Prepare schema definition with all fields
+      // Prepare schema definition with all fields.
+      //
+      // Everything not edited on this page is carried through untouched. Only
+      // the edited keys are overwritten — previously this rebuilt each field
+      // from five properties, so saving a discovered schema silently destroyed
+      // its constraints (the induced option sets generation relies on) and any
+      // linkedFieldConfig, along with the definition's own metadata.
       const schemaDefinition = {
+        ...(schema?.schema_definition || {}),
         fields: currentFields.map(f => ({
+          ...f,
           id: f.id || `field-${Date.now()}-${Math.random().toString(36).substring(7)}`,
           name: f.name.trim(),
           type: f.type,
