@@ -1,0 +1,6 @@
+services:
+  postgres:
+    volumes:
+      - type: bind
+        source: ${HOST_WORKSPACE_ROOT}/ClientSynth/scripts
+        target: /docker-entrypoint-initdb.d
