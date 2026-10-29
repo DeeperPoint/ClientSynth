@@ -4,7 +4,7 @@ import { getCurrentUser, query } from "@/lib/postgres/client"
 /**
  * POST /api/v1/schemas/import
  * 
- * Import schema from Knowledge Slot (MarketForge)
+ * Import schema from CommonContext (MarketForge)
  * 
  * Request Body (JSON):
  * - name: string (required)
@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
       seed_rules: schema_definition.seed_rules || [],
       metadata: {
         ...schema_definition.metadata,
-        version: "1.0-knowledge-slot",
+        version: "1.0-commoncontext",
         imported_at: new Date().toISOString(),
         source: "CommonContext"
       }

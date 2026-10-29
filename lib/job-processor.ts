@@ -970,7 +970,7 @@ export class JobProcessor {
               tenantContext: job.tenant_id,
               schemaId: job.schema_id,
               personaContext: this.jobPersonaContext.get(job.job_id), // Task 3: Add persona context
-              seedRules: job.schema_definition.seed_rules, // Knowledge Slot rules (CS-103)
+              seedRules: job.schema_definition.seed_rules, // CommonContext rules (CS-103)
             }
             
             // Pass previously generated values for uniqueness
@@ -1096,7 +1096,7 @@ export class JobProcessor {
               
               console.log(`[v0] AI generated for ${field.name}:`, fieldValue)
 
-              // Post-generation validation against Knowledge Slot rules (CS-102/103)
+              // Post-generation validation against CommonContext rules (CS-102/103)
               if (job.schema_definition.seed_rules && job.schema_definition.seed_rules.length > 0) {
                 const { RuleValidator } = await import("./validation/rule-validator")
                 const validationIssues = RuleValidator.validate(
@@ -1106,8 +1106,8 @@ export class JobProcessor {
                 
                 if (validationIssues.some(issue => issue.severity === 'error' && issue.field === field.name)) {
                   const errorIssue = validationIssues.find(issue => issue.severity === 'error' && issue.field === field.name)
-                  console.warn(`[v0] AI output violated Knowledge Slot rule: ${errorIssue?.message}`)
-                  throw new Error(`Knowledge Slot Rule Violation: ${errorIssue?.message}`)
+                  console.warn(`[v0] AI output violated CommonContext rule: ${errorIssue?.message}`)
+                  throw new Error(`CommonContext Rule Violation: ${errorIssue?.message}`)
                 }
               }
             } else {

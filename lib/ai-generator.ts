@@ -40,7 +40,7 @@ export interface GenerationContext {
   previouslyGeneratedValues?: string[] // Values to avoid for uniqueness
   temperature?: number // Optional temperature override for generation
   personaContext?: PersonaContext // Persona context for consistent generation
-  seedRules?: import("./types/schema-extensions").SeedRule[] // Knowledge Slot rules
+  seedRules?: import("./types/schema-extensions").SeedRule[] // CommonContext rules
   schemaContext?: SchemaContext // Full schema context for better generation quality
 }
 
@@ -445,7 +445,7 @@ IMPORTANT:
 5. Return ONLY a JSON object with a "value" field containing the clean value`
 
     if (context.seedRules && context.seedRules.length > 0) {
-      basePrompt += `\n\nDOMAIN CONSTRAINTS (Knowledge Slot):
+      basePrompt += `\n\nDOMAIN CONSTRAINTS (CommonContext):
       You must strictly adhere to the following logic and dependencies provided by the domain experts. Do not invent values that contradict these rules.`
     }
     
@@ -693,7 +693,7 @@ Return ONLY a JSON object with field names as keys.`
     }
 
     if (seedRules && seedRules.length > 0) {
-      systemPrompt += `\n\nDOMAIN CONSTRAINTS (Knowledge Slot): You must strictly adhere to the following logic and dependencies. Do not invent values that contradict these rules.`
+      systemPrompt += `\n\nDOMAIN CONSTRAINTS (CommonContext): You must strictly adhere to the following logic and dependencies. Do not invent values that contradict these rules.`
     }
 
     let userPrompt = `Generate record #${recordIndex + 1}. This record must feature a COMPLETELY DIFFERENT and UNIQUE person (name, contact, email) from all previous records. Use a different cultural origin for the name.`

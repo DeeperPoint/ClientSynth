@@ -10,7 +10,7 @@ export interface ValidationIssue {
 /**
  * RuleValidator
  * 
- * Logic for enforcing complex Knowledge Slot rules (CS-102).
+ * Logic for enforcing complex CommonContext rules (CS-102).
  */
 export class RuleValidator {
   /**
@@ -80,7 +80,7 @@ export class RuleValidator {
           }
         }
       }
-      // Add more rule types as defined in Knowledge Slot spec (conditional_enum, range_constraint...)
+      // Add more rule types as defined in CommonContext spec (conditional_enum, range_constraint...)
     }
 
     return issues

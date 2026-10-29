@@ -131,7 +131,7 @@ export interface PersonaContext {
 }
 
 /**
- * Advanced Seed Rules for Knowledge Slot Integration
+ * Advanced Seed Rules for CommonContext Integration
  * 
  * Rules define complex dependencies, constraints, and conditional logic
  * applied during data generation to ensure domain consistency.
@@ -171,7 +171,7 @@ export interface SeedRule {
 }
 
 /**
- * Enhanced Schema Definition representing the full Knowledge Slot contract
+ * Enhanced Schema Definition representing the full CommonContext contract
  */
 export interface KnowledgeSchemaDefinition {
   fields: ExtendedSchemaField[]
