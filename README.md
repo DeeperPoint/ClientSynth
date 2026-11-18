@@ -2,6 +2,12 @@
 
 *The Digital Twin population engine for the DeeperPoint ecosystem.*
 
+> **Where this fits.** ClientSynth is one part of the DeeperPoint toolkit.
+> [MarketForge](https://github.com/DeeperPoint/MarketForge) is the toolkit's design map: what the
+> parts are, the order in which a market is built with them (a domain wiki, a question page, a
+> twin, a marketplace), and how far each has got. This README carries ClientSynth's own detail:
+> installation, the generation pipeline and the API.
+
 [![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com/amunim729-8231s-projects/v0-synthetic-client-generation)
 [![Built with v0](https://img.shields.io/badge/Built%20with-v0.app-black?style=for-the-badge)](https://v0.app/chat/projects/7xHRLj9Plri)
 
