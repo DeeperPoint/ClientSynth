@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # The suites that need no database, no API keys and no running server.
+  #
+  # Everything under __tests__/integration/ talks to a live stack and is left
+  # out deliberately: a CI job that cannot pass is a job people learn to ignore,
+  # and then the checks that CAN pass get ignored alongside it.
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # No `tsc --noEmit` step. The repository does not currently type-check:
+      # there are pre-existing errors in 29 files across app/, lib/, components/
+      # and the integration tests, none of them related to this workflow. A gate
+      # that fails on its first run teaches people to ignore the whole file, so
+      # the step is left out rather than added red. Adding it back is a small
+      # piece of work on its own, separate from the checks below.
+
+      # Generation rules, the CommonContext contract seam, and population
+      # diversity. The diversity metrics are the "population diversity metrics
+      # in CI" half of the knowledge-architecture review's recommendation 6:
+      # mode collapse is invisible to record-level validation, because every
+      # record can be valid while the set is four records repeated.
+      - name: Tests
+        run: npx jest --testPathIgnorePatterns "__tests__/integration/"

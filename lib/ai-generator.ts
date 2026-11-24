@@ -1,4 +1,11 @@
 import { PersonaContext } from "./types/schema-extensions"
+import {
+  describeCondition,
+  describeRange,
+  matchedBranch,
+  resolveAllowed,
+  resolveRange,
+} from "./validation/rule-conditions"
 
 export interface SchemaContext {
   schemaName: string
@@ -505,6 +512,20 @@ IMPORTANT:
                  parts.push(`- Because ${rule.sourceField} is "${sourceVal}", DO NOT use any of these values: [${Array.isArray(excluded) ? excluded.join(', ') : excluded}]`)
                }
              }
+          } else if (rule.type === 'conditional_enum' && rule.targetFields.includes(fieldName)) {
+            const sourceVal = existingData?.[rule.sourceField]
+            const allowed = resolveAllowed(sourceVal, rule.config as any)
+            if (allowed && allowed.length > 0) {
+              const because = describeCondition(rule.sourceField, matchedBranch(sourceVal, rule.config as any))
+              parts.push(`- Because ${because}, the only allowed values for ${fieldName} are: [${allowed.join(', ')}]`)
+            }
+          } else if (rule.type === 'range_constraint' && rule.targetFields.includes(fieldName)) {
+            const sourceVal = existingData?.[rule.sourceField]
+            const range = resolveRange(sourceVal, rule.config as any)
+            const described = range ? describeRange(range) : ''
+            if (described) {
+              parts.push(`- ${fieldName} MUST be ${described}. Output only the number, with no units or words.`)
+            }
           } else {
             parts.push(`- Rule (${rule.type}): ${rule.description || 'Ensures domain consistency'}`)
           }

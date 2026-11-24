@@ -1,0 +1,121 @@
+{
+  "contract_version": "1.0",
+  "vertical": "manufacturing",
+  "compiled_at": "2026-11-24",
+  "supported_rule_types": [
+    "dependency",
+    "exclusion",
+    "conditional_enum",
+    "range_constraint"
+  ],
+  "permitted_values": {
+    "processes": [
+      "3-axis milling"
+    ]
+  },
+  "vocabulary": {
+    "processes": [
+      {
+        "field": "processes",
+        "preferred_label": "3-axis milling",
+        "alternative_labels": [
+          "3 axis mill",
+          "vertical milling"
+        ],
+        "broader": [
+          "milling"
+        ],
+        "narrower": [],
+        "source_page": "vocab/milling.md"
+      }
+    ]
+  },
+  "synonyms": {
+    "3-axis milling": [
+      "3 axis mill",
+      "vertical milling"
+    ]
+  },
+  "seed_rules": [
+    {
+      "id": "certs_by_headcount",
+      "name": "Certifications follow headcount",
+      "type": "conditional_enum",
+      "sourceField": "headcount",
+      "targetFields": [
+        "certifications"
+      ],
+      "config": {
+        "conditions": [
+          {
+            "when": {
+              "gt": 500
+            },
+            "allow": [
+              "AS9100D",
+              "NADCAP",
+              "ISO 9001:2015"
+            ]
+          },
+          {
+            "when": {
+              "gt": 0
+            },
+            "allow": [
+              "ISO 9001:2015"
+            ]
+          }
+        ]
+      },
+      "description": "Only shops above 500 people hold the full aerospace stack.",
+      "severity": "error",
+      "source_page": "rules/certs.md"
+    },
+    {
+      "id": "lead_time_range",
+      "name": "Lead time is quoted in days",
+      "type": "range_constraint",
+      "sourceField": "participant_type",
+      "targetFields": [
+        "lead_time_days"
+      ],
+      "config": {
+        "min": 1,
+        "max": 365,
+        "integer": true
+      },
+      "description": "",
+      "severity": "error",
+      "source_page": "rules/lead.md"
+    }
+  ],
+  "examples": {
+    "lead_time_days": [
+      {
+        "value": 21,
+        "source": "source_cgc"
+      },
+      {
+        "value": 35,
+        "source": ""
+      },
+      {
+        "value": 60,
+        "source": ""
+      }
+    ]
+  },
+  "persona_axes": [
+    {
+      "axis": "scale",
+      "values": [
+        "sole operator",
+        "small shop",
+        "mid-size",
+        "enterprise"
+      ],
+      "field": "headcount",
+      "source_page": "axes/scale.md"
+    }
+  ]
+}
